@@ -33,7 +33,7 @@ Respond with ONLY raw JSON matching exactly this schema:
 
     const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
-    // Make the request to Groq's insanely fast API
+    // Make the request to Groq's API using the high-IQ OpenAI 120B model
     const groqRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
       method: 'POST',
       headers: { 
@@ -41,7 +41,7 @@ Respond with ONLY raw JSON matching exactly this schema:
         'Authorization': `Bearer ${process.env.GROQ_API_KEY}` 
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile', 
+        model: 'openai/gpt-oss-120b', // Changed right here
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
