@@ -440,6 +440,58 @@
   border: 1px solid var(--hairline);
 }
 
+/* --- Follow-up Option Styles --- */
+.assay-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
+}
+
+.assay-followup-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+
+.assay-followup-btn {
+  background: var(--bench);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 14px 18px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14.5px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+}
+
+.assay-followup-btn::before {
+  content: '→';
+  margin-right: 12px;
+  color: var(--reagent);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.assay-followup-btn:hover {
+  background: var(--panel-bg);
+  border-color: var(--reagent);
+  color: var(--reagent);
+  transform: translateX(4px);
+  box-shadow: var(--shadow-md);
+}
+
 .assay-footnote {
   font-size: 12px;
   color: var(--ink-faint);
@@ -576,7 +628,8 @@
     return d.innerHTML;
   }
 
-  function renderPayload(directResponse, results, isFallback) {
+  // Modified renderPayload to accept followUpOptions
+  function renderPayload(directResponse, results, followUpOptions, isFallback) {
     let html = '';
     
     if (directResponse) {
@@ -625,11 +678,26 @@
           </div>
         </div>`;
     });
+    
+    html += '</div>';
 
-    html += '</div><div class="assay-footnote">Links open in a new tab. Always review structural documentation before proceeding.</div>';
+    // Build the Follow-up Options section if they exist
+    if (followUpOptions && followUpOptions.length > 0) {
+      html += `
+        <div class="assay-followups">
+          <div class="assay-followup-title">Suggested Follow-up Assays</div>`;
+      followUpOptions.forEach(opt => {
+        html += `<button class="assay-followup-btn" data-goal="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
+      });
+      html += `</div>`;
+    }
+
+    html += '<div class="assay-footnote">Links open in a new tab. Always review structural documentation before proceeding.</div>';
+    
     outputEl.innerHTML = html;
 
     initToggleListener();
+    initFollowUpListeners();
 
     const copyBtn = root.querySelector('#assayCopyLinks');
     if (copyBtn) {
@@ -653,6 +721,18 @@
         toggleBtn.textContent = isExpanded ? 'Read Less' : 'Read More';
       });
     }
+  }
+
+  function initFollowUpListeners() {
+    const followUpBtns = root.querySelectorAll('.assay-followup-btn');
+    followUpBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (isCooldown) return;
+        goalInput.value = btn.dataset.goal;
+        window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll back up to the form
+        run();
+      });
+    });
   }
 
   function showError(message) {
@@ -707,8 +787,15 @@
 
       const parsed = await response.json();
       const results = Array.isArray(parsed.results) ? parsed.results : [];
+      const followUps = Array.isArray(parsed.followUpOptions) ? parsed.followUpOptions : [];
       
-      renderPayload(parsed.directResponse, results.filter(r => r && r.title && r.url), parsed.isFallback || false);
+      // Pass the followUps to the render function
+      renderPayload(
+        parsed.directResponse, 
+        results.filter(r => r && r.title && r.url), 
+        followUps, 
+        parsed.isFallback || false
+      );
       callSucceeded = true;
 
     } catch (err) {
