@@ -1,3 +1,9 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assay - Literature Lookup</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
@@ -19,7 +25,7 @@
   background: var(--paper);
   color: var(--ink);
   font-family: 'IBM Plex Sans', sans-serif;
-  min-height: 100%;
+  min-height: 100vh;
   padding: 28px 16px 60px;
   display: flex;
   justify-content: center;
@@ -310,7 +316,8 @@
   .assay-row .assay-button { width: 100%; text-align: center; }
 }
 </style>
-
+</head>
+<body>
 <div class="assay-root" id="assayRoot">
   <div class="assay-container">
 
@@ -497,64 +504,25 @@
     outputEl.innerHTML = '';
     startTicker();
 
-    const typeLabel = selectedType === 'auto' ? 'unspecified — infer whether it is a compound, gene, or pathway from the name itself'
-      : selectedType;
-
-    const systemPrompt = `You are a scientific literature search assistant working inside a research tool. Use the web search tool to find REAL studies about the given target, evaluated against the stated research goal.
-
-Search across PubMed, Google Scholar, and whichever specialty databases fit the target type: PubChem and ChEMBL for compounds; NCBI Gene, GeneCards, and UniProt for genes; KEGG, Reactome, and WikiPathways for pathways; bioRxiv and medRxiv for preprints. Run several distinct searches covering different angles before answering.
-
-Only include results you actually found via search, with real working URLs. Never invent papers, links, authors, or details. If a result's relevance to the stated goal is unclear, leave it out rather than guessing.
-
-Respond with ONLY raw JSON, no markdown fences, no commentary, matching exactly this schema:
-{"results":[{"title":string,"url":string,"source":string,"year":string|null,"relevance":string}]}
-
-Limit to the 8-10 most relevant results. Each "relevance" string must be under 18 words, written in your own words (never quote the source), explaining how that specific study connects to the goal. Each "source" should be a short label like "PubMed", "Google Scholar", "PubChem", "bioRxiv", etc. If nothing relevant turns up, return {"results":[]}.`;
-
-    const userPrompt = `Target type: ${typeLabel}
-Target: ${target}
-Research goal: ${goal || 'general relevant literature on this target'}
-
-Find the most relevant real studies.`;
+    const typeLabel = selectedType === 'auto' ? 'unspecified' : selectedType;
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      // Send the data to your own backend API
+      const response = await fetch('/api/assay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }]
+        body: JSON.stringify({ 
+          target: target, 
+          goal: goal, 
+          typeLabel: typeLabel 
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Request failed (${response.status})`);
+        throw new Error(`Server request failed (${response.status})`);
       }
 
-      const data = await response.json();
-      const text = (data.content || [])
-        .map(block => (block.type === 'text' ? block.text : ''))
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-
-      if (!text) {
-        throw new Error('Empty response from search.');
-      }
-
-      const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch (parseErr) {
-        showError('Got a response back, but could not parse it as structured results. Raw output below — try running again.', cleaned);
-        return;
-      }
-
+      const parsed = await response.json();
       const results = Array.isArray(parsed.results) ? parsed.results : [];
       renderResults(results.filter(r => r && r.title && r.url));
 
@@ -567,3 +535,5 @@ Find the most relevant real studies.`;
   }
 })();
 </script>
+</body>
+</html>
