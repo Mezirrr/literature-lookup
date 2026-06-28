@@ -4,7 +4,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { target, goal } = req.body;
+  // Properly extract all variables, including typeLabel
+  const { target, goal, typeLabel } = req.body;
 
   try {
     // 1. Fetch REAL papers from Semantic Scholar
@@ -31,13 +32,14 @@ Your job is to evaluate which ones actually match the user's research goal, sele
 Respond with ONLY raw JSON matching exactly this schema:
 {"results":[{"title":string,"url":string,"source":"Semantic Scholar","year":string|null,"relevance":string}]}`;
 
-    const userPrompt = `Target: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
+    // Pass the typeLabel to Claude so it knows the context
+    const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY, // Pulls securely from Vercel!
+        'x-api-key': process.env.ANTHROPIC_API_KEY, // Pulls securely from Vercel
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
@@ -53,6 +55,11 @@ Respond with ONLY raw JSON matching exactly this schema:
     // Extract the JSON Claude spits out
     const text = anthropicData.content[0].text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
+    
+    if (!jsonMatch) {
+       throw new Error("Claude did not return valid JSON.");
+    }
+    
     const finalData = JSON.parse(jsonMatch[0]);
 
     // 3. Send back to your frontend
