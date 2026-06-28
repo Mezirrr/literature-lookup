@@ -18,33 +18,16 @@ export default async function handler(req, res) {
 
     // Phase 1 & 2: Process each target to fetch an expanded literature pool
     for (const singleTarget of targetsArray) {
-      const systemPrompt = `You are an elite, highly open-minded scientific research assistant specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
+      const queryExpansionPrompt = `You are an elite biochemical intelligence engine. The user has a research target and a lateral discovery goal.
+Target: ${singleTarget}
+Goal: ${goal}
 
-Your task is:
-1. Under "directResponse", provide a deep, high-IQ direct response explaining the conceptual, structural, biochemical, or clinical connection between the user's multiple targets (${targetsHeading}) and their specific discovery goal.
-   - Map out synergistic actions, shared pathways, or direct cell-signaling convergence points (e.g., direct ligand-receptor interactions).
-   - Trace cross-talk between related ligands/pathways comprehensively. Analyze competing mechanisms, receptor saturation elements, or alternative signaling adjustments when these compounds act together or contrast.
-   - Detail the explicit molecular mechanisms behind any combined side effects, toxicities, or runaways.
-2. Under "followUpOptions", provide exactly 3 logical follow-up questions/goals (strings) based on the current analysis that a researcher might want to investigate next. Keep them under 12 words each.
-3. Evaluate the combined list of papers and select the top relevant ones (up to a maximum of 15 total). 
-   - Write a strict maximum 18-word "relevance" explanation for each, revealing how it links back to the target matrix and goal.
-   - Accurately classify the "studyType" as exactly one of these strings: "In Vitro", "In Vivo", or "Human". If unknown, default to "In Vivo".
+Generate a clean, professional, unquoted PubMed/EuropePMC search query optimized to catch cross-disciplinary and mechanistic connections. 
+- Do not include conversational filler.
+- Use boolean operators (AND, OR) and clean keyword groupings.
+- Focus on underlying pathways, target receptors, and physiological mechanisms.
 
-Respond with ONLY raw JSON matching exactly this schema:
-{
-  "directResponse": "string",
-  "followUpOptions": ["string", "string", "string"],
-  "results": [
-    {
-      "title": "string",
-      "url": "string",
-      "source": "PubMed",
-      "year": "string",
-      "relevance": "string",
-      "studyType": "In Vitro | In Vivo | Human"
-    }
-  ]
-}`;
+Respond with ONLY the raw query string.`;
 
       const expansionRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
         method: 'POST',
@@ -101,11 +84,13 @@ Respond with ONLY raw JSON matching exactly this schema:
 
 Your task is:
 1. Under "directResponse", provide a deep, high-IQ direct response explaining the conceptual, structural, biochemical, or clinical connection between the user's multiple targets (${targetsHeading}) and their specific discovery goal.
-   - Map out synergistic actions, shared pathways, or direct cell-signaling convergence points.
+   - Map out synergistic actions, shared pathways, or direct cell-signaling convergence points (e.g., direct ligand-receptor interactions).
+   - Trace cross-talk between related ligands/pathways comprehensively. Analyze competing mechanisms, receptor saturation elements, or alternative signaling adjustments when these compounds act together or contrast.
+   - Detail the explicit molecular mechanisms behind any combined side effects, toxicities, or runaways.
 2. Under "followUpOptions", provide exactly 3 logical follow-up questions/goals (strings) based on the current analysis that a researcher might want to investigate next. Keep them under 12 words each.
 3. Evaluate the combined list of papers and select the top relevant ones (up to a maximum of 15 total). 
-   - Write a strict maximum 18-word "relevance" explanation for each, revealing how it links back to the target matrix and goal.
-   - Accurately classify the "studyType" as exactly one of these strings: "In Vitro", "In Vivo", or "Human". If unknown, default to "In Vivo".
+   - Write a strict maximum 18-word "relevance" explanation for each, revealing how it links or provides foundational/partial context back to the target matrix and goal.
+   - Analyze the title and abstract text to accurately classify the "studyType" as exactly one of these strings: "In Vitro", "In Vivo", or "Human". If it cannot be determined, default to "In Vivo".
 
 Respond with ONLY raw JSON matching exactly this schema:
 {
