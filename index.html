@@ -8,25 +8,29 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
 .assay-root {
-  --paper: #FAFAF7;
-  --ink: #1B1F1D;
-  --ink-soft: rgba(27,31,29,0.62);
-  --ink-faint: rgba(27,31,29,0.38);
-  --bench: #EFEDE4;
-  --hairline: #D8D4C8;
-  --reagent: #1E5AA8;
-  --reagent-soft: rgba(30,90,168,0.10);
-  --assay-green: #2F7A4F;
-  --assay-green-soft: rgba(47,122,79,0.10);
-  --flag-amber: #B5790F;
-  --flag-amber-soft: rgba(181,121,15,0.12);
-  --error: #B23B3B;
+  --paper: #F6F6F2;
+  --panel-bg: #FFFFFF;
+  --ink: #111413;
+  --ink-soft: #4A504E;
+  --ink-faint: #8E9693;
+  --bench: #EBEAE1;
+  --hairline: #D3CFC1;
+  --reagent: #1A549E;
+  --reagent-soft: rgba(26, 84, 158, 0.08);
+  --assay-green: #246B43;
+  --assay-green-soft: rgba(36, 107, 67, 0.08);
+  --flag-amber: #A36A0B;
+  --flag-amber-soft: rgba(163, 106, 11, 0.08);
+  --error: #9E2B2B;
+  --shadow-sm: 0 2px 8px -1px rgba(27, 31, 29, 0.04);
+  --shadow-md: 0 8px 24px -4px rgba(27, 31, 29, 0.06), 0 2px 6px -1px rgba(27, 31, 29, 0.04);
+  --shadow-lg: 0 16px 32px -6px rgba(27, 31, 29, 0.08), 0 4px 12px -2px rgba(27, 31, 29, 0.04);
 
   background: var(--paper);
   color: var(--ink);
   font-family: 'IBM Plex Sans', sans-serif;
   min-height: 100vh;
-  padding: 28px 16px 60px;
+  padding: 40px 16px 80px;
   display: flex;
   justify-content: center;
 }
@@ -35,155 +39,194 @@
 
 .assay-container {
   width: 100%;
-  max-width: 680px;
+  max-width: 700px;
 }
 
-.assay-header { margin-bottom: 22px; }
+.assay-header { 
+  margin-bottom: 32px; 
+  border-bottom: 2px solid var(--hairline);
+  padding-bottom: 24px;
+}
 
 .assay-wordmark {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
-  font-size: 13px;
-  letter-spacing: 0.18em;
+  font-size: 12px;
+  letter-spacing: 0.2em;
   color: var(--reagent);
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 12px;
 }
 
 .assay-wordmark .dot {
-  width: 7px; height: 7px;
+  width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--assay-green);
   display: inline-block;
+  box-shadow: 0 0 0 3px var(--assay-green-soft);
 }
 
 .assay-title {
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 700;
-  margin: 8px 0 4px;
-  letter-spacing: -0.01em;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
 
 .assay-subtitle {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--ink-soft);
-  line-height: 1.5;
-  max-width: 480px;
+  line-height: 1.6;
+  max-width: 640px;
 }
 
 .assay-panel {
-  background: var(--bench);
+  background: var(--panel-bg);
   border: 1px solid var(--hairline);
-  border-radius: 10px;
-  padding: 18px;
-  margin-bottom: 24px;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
+  box-shadow: var(--shadow-md);
 }
 
-.assay-field { margin-bottom: 14px; }
+.assay-field { margin-bottom: 18px; }
 .assay-field:last-of-type { margin-bottom: 0; }
 
 .assay-label {
   display: block;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--reagent);
-  margin-bottom: 6px;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
 }
 
 .assay-input, .assay-textarea {
   width: 100%;
-  background: var(--paper);
+  background: #FAF9F5;
   border: 1px solid var(--hairline);
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-radius: 8px;
+  padding: 12px 14px;
   font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 14.5px;
+  font-size: 15px;
   color: var(--ink);
   outline: none;
-  transition: border-color 0.15s ease;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .assay-input::placeholder, .assay-textarea::placeholder { color: var(--ink-faint); }
 
 .assay-input:focus, .assay-textarea:focus {
   border-color: var(--reagent);
-  box-shadow: 0 0 0 3px var(--reagent-soft);
+  background: var(--panel-bg);
+  box-shadow: 0 0 0 4px var(--reagent-soft), inset 0 1px 2px rgba(0,0,0,0.01);
 }
 
 .assay-pills {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .assay-pill {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 11.5px;
-  letter-spacing: 0.04em;
-  padding: 6px 11px;
-  border-radius: 5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 8px 14px;
+  border-radius: 6px;
   border: 1px solid var(--hairline);
-  background: var(--paper);
+  background: var(--panel-bg);
   color: var(--ink-soft);
   cursor: pointer;
-  transition: all 0.12s ease;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
 }
 
-.assay-pill:hover { border-color: var(--reagent); color: var(--ink); }
+.assay-pill:hover { 
+  border-color: var(--ink-soft); 
+  color: var(--ink);
+}
 
 .assay-pill.active {
-  background: var(--reagent);
-  border-color: var(--reagent);
-  color: var(--paper);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--panel-bg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
-.assay-row { display: flex; gap: 14px; align-items: flex-start; margin-top: 16px; flex-wrap: wrap; }
+.assay-row { 
+  display: flex; 
+  gap: 12px; 
+  align-items: center; 
+  margin-top: 24px; 
+  flex-wrap: wrap; 
+}
 
 .assay-button {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--reagent);
+  color: #FFFFFF;
   border: none;
-  border-radius: 6px;
-  padding: 11px 20px;
+  border-radius: 8px;
+  padding: 13px 24px;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 4px 12px rgba(26, 84, 158, 0.2);
+  transition: all 0.15s ease;
 }
 
-.assay-button:hover { opacity: 0.85; }
+.assay-button:hover { 
+  opacity: 0.95;
+  box-shadow: 0 6px 16px rgba(26, 84, 158, 0.3);
+  transform: translateY(-1px);
+}
 .assay-button:active { transform: translateY(1px); }
-.assay-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.assay-button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; transform: none; }
 
 .assay-button.secondary {
   background: transparent;
   color: var(--ink-soft);
   border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-sm);
 }
-.assay-button.secondary:hover { border-color: var(--ink-faint); color: var(--ink); opacity: 1; }
+.assay-button.secondary:hover { 
+  border-color: var(--ink-soft); 
+  color: var(--ink); 
+  background: #FAF9F5;
+  transform: none;
+  box-shadow: var(--shadow-sm);
+}
 
 .assay-status {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  margin-bottom: 18px;
-  min-height: 18px;
-  display: flex;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--reagent);
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
 .assay-status .cursor {
   display: inline-block;
-  width: 7px; height: 14px;
+  width: 6px; height: 14px;
   background: var(--reagent);
   animation: assayBlink 1s steps(1) infinite;
 }
@@ -191,36 +234,38 @@
 @keyframes assayBlink { 50% { opacity: 0; } }
 
 .assay-error {
-  font-size: 13.5px;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--error);
-  background: rgba(178,59,59,0.07);
-  border: 1px solid rgba(178,59,59,0.25);
+  background: rgba(158, 43, 43, 0.05);
+  border: 1px solid rgba(158, 43, 43, 0.2);
   border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 18px;
+  padding: 14px 16px;
+  margin-bottom: 24px;
   line-height: 1.5;
 }
 
 .assay-empty {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--ink-faint);
-  border: 1px dashed var(--hairline);
-  border-radius: 10px;
-  padding: 28px 18px;
+  border: 2px dashed var(--hairline);
+  border-radius: 12px;
+  padding: 40px 24px;
   text-align: center;
   line-height: 1.6;
 }
 
 .assay-direct-response {
-  background: linear-gradient(to bottom right, #ffffff, var(--bench));
+  background: var(--panel-bg);
   border: 1px solid var(--hairline);
   border-left: 4px solid var(--reagent);
   border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 24px;
-  font-size: 14.5px;
-  line-height: 1.6;
+  padding: 24px;
+  margin-bottom: 32px;
+  font-size: 15.5px;
+  line-height: 1.65;
   color: var(--ink);
+  box-shadow: var(--shadow-lg);
 }
 
 .assay-direct-title {
@@ -229,13 +274,13 @@
   font-weight: 600;
   text-transform: uppercase;
   color: var(--reagent);
-  letter-spacing: 0.08em;
-  margin-bottom: 8px;
+  letter-spacing: 0.1em;
+  margin-bottom: 12px;
 }
 
 .assay-direct-text {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;  
   overflow: hidden;
   transition: max-height 0.25s ease-out;
@@ -251,47 +296,65 @@
   border: none;
   color: var(--reagent);
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   padding: 0;
-  margin-top: 8px;
+  margin-top: 14px;
   text-decoration: underline;
+  text-underline-offset: 3px;
   display: block;
 }
 
 .assay-resultsbar {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .assay-resultscount {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11.5px;
-  color: var(--ink-faint);
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .assay-copy {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--reagent);
   background: none;
   border: none;
   cursor: pointer;
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
   padding: 0;
+}
+
+.assay-list {
+  background: var(--panel-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 
 .assay-entry {
   display: flex;
-  gap: 12px;
-  border-bottom: 1px solid var(--hairline);
-  padding: 14px 2px;
+  gap: 16px;
+  border-bottom: 1px solid #FAF9F5;
+  padding: 20px;
+  transition: background-color 0.1s ease;
+}
+
+.assay-entry:hover {
+  background-color: #FAF9F5;
 }
 
 .assay-entry:last-child { border-bottom: none; }
@@ -300,73 +363,82 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
-  width: 30px;
-  padding-top: 1px;
+  width: 32px;
+  padding-top: 2px;
 }
 
 .assay-accession {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 11px;
+  font-weight: 500;
   color: var(--ink-faint);
 }
 
 .assay-tab {
   width: 4px;
   flex: 1;
-  min-height: 24px;
-  border-radius: 2px;
+  min-height: 32px;
+  border-radius: 4px;
 }
 
 .assay-body { flex: 1; min-width: 0; }
 
 .assay-entry-title {
-  font-size: 14.5px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
   text-decoration: none;
   line-height: 1.4;
+  display: inline-block;
+  margin-bottom: 6px;
 }
 
-.assay-entry-title:hover { text-decoration: underline; }
+.assay-entry-title:hover { 
+  color: var(--reagent);
+  text-decoration: underline; 
+}
 
 .assay-entry-relevance {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--ink-soft);
-  line-height: 1.5;
-  margin: 5px 0 7px;
+  line-height: 1.55;
+  margin: 0 0 12px;
 }
 
 .assay-entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
 }
 
 .assay-tag {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 4px;
-  margin-right: 7px;
+  font-weight: 600;
 }
 
 .assay-tag.type-tag {
   background: var(--bench);
   color: var(--ink-soft);
-  border: 1px solid var(--hairline);
 }
 
 .assay-footnote {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-faint);
-  margin-top: 20px;
+  margin-top: 24px;
+  text-align: center;
   line-height: 1.5;
 }
 
 @media (max-width: 480px) {
-  .assay-title { font-size: 22px; }
+  .assay-title { font-size: 26px; }
   .assay-row { flex-direction: column; align-items: stretch; }
   .assay-row .assay-button { width: 100%; text-align: center; }
 }
@@ -379,8 +451,6 @@
     <div class="assay-header">
       <span class="assay-wordmark"><span class="dot"></span>By Mezir</span>
       <div class="assay-title">PharmaEngine</div>
-      <div class="assay-subtitle">Enter a compound, gene, or pathway and what you're trying to find out. It searches PubMed, Scholar, and relevant specialty databases for studies that actually match.</div>
-
       <div class="assay-subtitle">An advanced biomedical cross-linking engine. Input single or multiple targets separated by commas to map receptor cross-talk, trace pathway convergence, and synthesize structured data pipelines across live scientific literature.</div>
     </div>
 
@@ -410,235 +480,4 @@
 
     <div id="assayStatus"></div>
     <div id="assayOutput">
-      <div class="assay-empty">No samples queried yet. Enter a target above to pull literature.</div>
-    </div>
-
-  </div>
-</div>
-
-<script>
-(function() {
-  const root = document.getElementById('assayRoot');
-  if (!root) { console.error('Assay: root container not found.'); return; }
-  const targetInput = root.querySelector('#assayTarget');
-  const goalInput = root.querySelector('#assayGoal');
-  const pills = root.querySelectorAll('.assay-pill');
-  const runBtn = root.querySelector('#assayRun');
-  const clearBtn = root.querySelector('#assayClear');
-  const statusEl = root.querySelector('#assayStatus');
-  const outputEl = root.querySelector('#assayOutput');
-
-  let selectedType = 'auto';
-  let isCooldown = false;
-  let tickerInterval = null;
-
-  pills.forEach(p => {
-    p.addEventListener('click', () => {
-      pills.forEach(x => x.classList.remove('active'));
-      p.classList.add('active');
-      selectedType = p.dataset.type;
-    });
-  });
-
-  clearBtn.addEventListener('click', () => {
-    targetInput.value = '';
-    goalInput.value = '';
-    statusEl.innerHTML = '';
-    outputEl.innerHTML = '<div class="assay-empty">No samples queried yet. Enter a target above to pull literature.</div>';
-  });
-
-  [targetInput, goalInput].forEach(el => {
-    el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { 
-        e.preventDefault(); 
-        if (!isCooldown) run(); 
-      }
-    });
-  });
-
-  runBtn.addEventListener('click', run);
-
-  const tickerPhrases = [
-    'optimizing search parameter matrices', 'querying pubmed systems', 'cross-referencing structural records', 'analyzing abstracts with 120b logic', 'scoring lateral path linkages'
-  ];
-
-  function startTicker() {
-    let i = 0;
-    statusEl.innerHTML = `<div class="assay-status">&gt; ${tickerPhrases[0]}<span class="cursor"></span></div>`;
-    const line = statusEl.querySelector('.assay-status');
-    tickerInterval = setInterval(() => {
-      i = (i + 1) % tickerPhrases.length;
-      line.innerHTML = `&gt; ${tickerPhrases[i]}<span class="cursor"></span>`;
-    }, 1400);
-  }
-
-  function stopTicker() {
-    if (tickerInterval) clearInterval(tickerInterval);
-    tickerInterval = null;
-    statusEl.innerHTML = '';
-  }
-
-  function sourceStyle(source) {
-    const s = (source || '').toLowerCase();
-    if (s.includes('pubmed') || s.includes('medrxiv') || s.includes('biorxiv')) {
-      return { tab: 'var(--reagent)', bg: 'var(--reagent-soft)', fg: 'var(--reagent)' };
-    }
-    if (s.includes('scholar')) {
-      return { tab: 'var(--assay-green)', bg: 'var(--assay-green-soft)', fg: 'var(--assay-green)' };
-    }
-    return { tab: 'var(--flag-amber)', bg: 'var(--flag-amber-soft)', fg: 'var(--flag-amber)' };
-  }
-
-  function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str == null ? '' : String(str);
-    return d.innerHTML;
-  }
-
-  function renderPayload(directResponse, results, isFallback) {
-    let html = '';
-    
-    if (directResponse) {
-      html += `
-        <div class="assay-direct-response">
-          <div class="assay-direct-title">Synthesis & Analytical Cross-Linking</div>
-          <div class="assay-direct-text" id="assayDirectText">${escapeHtml(directResponse)}</div>
-          <button class="assay-toggle-btn" id="assayToggleBtn">Read More</button>
-        </div>
-      `;
-    }
-
-    if (!results || !results.length) {
-      html += '<div class="assay-empty">No literature listings found. Review conceptual analysis box above for structural insights.</div>';
-      outputEl.innerHTML = html;
-      initToggleListener();
-      return;
-    }
-
-    const resultsTitleText = isFallback ? 'Foundational / Partially Related Studies' : 'Relevant Matches Found';
-
-    html += `
-      <div class="assay-resultsbar">
-        <span class="assay-resultscount" style="${isFallback ? 'color: var(--flag-amber)' : ''}">${results.length} ${resultsTitleText}</span>
-        <button class="assay-copy" id="assayCopyLinks">Copy all links</button>
-      </div>
-      <div class="assay-list">`;
-
-    results.forEach((r, idx) => {
-      const style = sourceStyle(r.source);
-      const num = String(idx + 1).padStart(3, '0');
-      const studyTypeTag = r.studyType ? `<span class="assay-tag type-tag">${escapeHtml(r.studyType)}</span>` : '';
-      
-      html += `
-        <div class="assay-entry">
-          <div class="assay-rail">
-            <span class="assay-accession">${num}</span>
-            <span class="assay-tab" style="background:${style.tab}"></span>
-          </div>
-          <div class="assay-body">
-            <a class="assay-entry-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.title)}</a>
-            <div class="assay-entry-relevance">${escapeHtml(r.relevance)}</div>
-            <div class="assay-entry-meta">
-              <span class="assay-tag" style="background:${style.bg}; color:${style.fg}">${escapeHtml(r.source || 'source')}</span>${studyTypeTag}${r.year ? escapeHtml(r.year) : ''}
-            </div>
-          </div>
-        </div>`;
-    });
-
-    html += '</div><div class="assay-footnote">Links open in a new tab. Always review structural documentation before proceeding.</div>';
-    outputEl.innerHTML = html;
-
-    initToggleListener();
-
-    const copyBtn = root.querySelector('#assayCopyLinks');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', () => {
-        const text = results.map(r => r.url).join('\n');
-        navigator.clipboard.writeText(text).then(() => {
-          const original = copyBtn.textContent;
-          copyBtn.textContent = 'Copied';
-          setTimeout(() => { copyBtn.textContent = original; }, 1500);
-        });
-      });
-    }
-  }
-
-  function initToggleListener() {
-    const toggleBtn = root.querySelector('#assayToggleBtn');
-    const textEl = root.querySelector('#assayDirectText');
-    if (toggleBtn && textEl) {
-      toggleBtn.addEventListener('click', () => {
-        const isExpanded = textEl.classList.toggle('expanded');
-        toggleBtn.textContent = isExpanded ? 'Read Less' : 'Read More';
-      });
-    }
-  }
-
-  function showError(message) {
-    outputEl.innerHTML = `<div class="assay-error">${escapeHtml(message)}</div>`;
-  }
-
-  function handleCooldown(secondsLeft) {
-    isCooldown = true;
-    runBtn.disabled = true;
-    runBtn.textContent = `Hold (${secondsLeft}s)`;
-    
-    const interval = setInterval(() => {
-      secondsLeft--;
-      if (secondsLeft <= 0) {
-        clearInterval(interval);
-        isCooldown = false;
-        runBtn.disabled = false;
-        runBtn.textContent = 'Run assay';
-      } else {
-        runBtn.textContent = `Hold (${secondsLeft}s)`;
-      }
-    }, 1000);
-  }
-
-  async function run() {
-    if (isCooldown) return;
-    
-    const target = targetInput.value.trim();
-    const goal = goalInput.value.trim();
-    if (!target) {
-      targetInput.focus();
-      targetInput.style.borderColor = 'var(--error)';
-      setTimeout(() => { targetInput.style.borderColor = ''; }, 1200);
-      return;
-    }
-
-    outputEl.innerHTML = '';
-    startTicker();
-    runBtn.disabled = true;
-
-    const typeLabel = selectedType === 'auto' ? 'unspecified' : selectedType;
-    let callSucceeded = false;
-
-    try {
-      const response = await fetch('/api/assay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target, goal, typeLabel })
-      });
-
-      if (!response.ok) throw new Error(`Server request failed (${response.status})`);
-
-      const parsed = await response.json();
-      const results = Array.isArray(parsed.results) ? parsed.results : [];
-      
-      renderPayload(parsed.directResponse, results.filter(r => r && r.title && r.url), parsed.isFallback || false);
-      callSucceeded = true;
-
-    } catch (err) {
-      showError('Something went wrong running the search: ' + err.message + '. Try again in a moment.');
-      callSucceeded = false;
-    } finally {
-      stopTicker();
-      handleCooldown(callSucceeded ? 10 : 5);
-    }
-  }
-})();
-</script>
-</body>
-</html>
+      <div class="assay-empty">No samples queried yet. Enter a target
