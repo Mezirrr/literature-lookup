@@ -4,7 +4,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Properly extract all variables, including typeLabel
   const { target, goal, typeLabel } = req.body;
 
   try {
@@ -17,7 +16,7 @@ export default async function handler(req, res) {
        return res.status(200).json({ results: [] });
     }
 
-    // Format the real papers to show to Claude
+    // Format the real papers to show to Gemini
     const realPapers = scholarData.data.map(p => ({
         title: p.title,
         url: p.url,
@@ -25,42 +24,39 @@ export default async function handler(req, res) {
         abstract: p.abstract ? p.abstract.substring(0, 300) + '...' : 'No abstract'
     }));
 
-    // 2. Send the REAL papers to Claude to evaluate
+    // 2. Send the REAL papers to Gemini to evaluate
     const systemPrompt = `You are a scientific literature assistant. I will provide you with a list of REAL academic papers pulled from a database. 
 Your job is to evaluate which ones actually match the user's research goal, select the top 8, and write a strict maximum 18-word "relevance" explanation for why it matters to their goal.
 
 Respond with ONLY raw JSON matching exactly this schema:
-{"results":[{"title":string,"url":string,"source":"Semantic Scholar","year":string|null,"relevance":string}]}`;
+{"results":[{"title":"string","url":"string","source":"Semantic Scholar","year":"string","relevance":"string"}]}`;
 
-    // Pass the typeLabel to Claude so it knows the context
     const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    // Make the request to Google's Gemini API
+    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY, // Pulls securely from Vercel
-        'anthropic-version': '2023-06-01'
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json" // Forces Gemini to return perfect JSON
+        }
       })
     });
 
-    const anthropicData = await anthropicRes.json();
+    const geminiData = await geminiRes.json();
     
-    // Extract the JSON Claude spits out
-    const text = anthropicData.content[0].text;
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    
-    if (!jsonMatch) {
-       throw new Error("Claude did not return valid JSON.");
+    if (!geminiData.candidates || geminiData.candidates.length === 0) {
+       throw new Error("Gemini did not return a valid response.");
     }
     
-    const finalData = JSON.parse(jsonMatch[0]);
+    // Extract and parse the JSON Gemini spits out
+    const text = geminiData.candidates[0].content.parts[0].text;
+    const finalData = JSON.parse(text);
 
     // 3. Send back to your frontend
     res.status(200).json(finalData);
