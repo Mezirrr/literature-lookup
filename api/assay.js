@@ -64,6 +64,9 @@ Respond with ONLY the raw query string.`;
 
 Your task is twofold:
 1. Under "directResponse", provide a deep, high-IQ direct response explaining the conceptual, structural, biochemical, or clinical connection between the user's target and their goal.
+   - Do not rely solely on surface-level or indirect physiological properties (such as changes in physical loading or muscle mass). You must cleanly map out direct cell-signaling pathways (e.g., direct ligand-receptor actions on osteoblasts/osteoclasts).
+   - Trace cross-talk between related ligands/pathways comprehensively. If a target receptor is blocked, identify ALL major competing ligands (e.g., Myostatin, Activins, and GDFs) and explain downstream shifts in alternative pathways (e.g., BMP/TGF-beta balancing).
+   - Detail the explicit molecular mechanisms behind any side effects or safety risks mentioned (e.g., mechanistic drivers of heterotopic/ectopic ossification or pathway runaways).
 2. Evaluate the provided list of papers and select the top relevant ones (up to a maximum of 15). Write a strict maximum 18-word "relevance" explanation for each, revealing how it links or provides foundational/partial context back to the target and goal.
 
 Respond with ONLY raw JSON matching exactly this schema:
