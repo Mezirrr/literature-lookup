@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-  // Only allow POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -7,34 +6,61 @@ export default async function handler(req, res) {
   const { target, goal, typeLabel } = req.body;
 
   try {
-    // 1. Fetch REAL papers from Europe PMC (PubMed)
-    // We are broadening the search slightly to give the AI more room to cross-link
-    const searchQuery = `${target} ${goal}`.trim();
-    const pmcRes = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(searchQuery)}&format=json&resultType=core&pageSize=20`);
-    const pmcData = await pmcRes.json();
+    // Phase 1: Use the AI to expand queries and think laterally before hitting PubMed
+    const queryExpansionPrompt = `You are an elite biochemical intelligence engine. The user has a research target and a lateral discovery goal.
+Target: ${target}
+Goal: ${goal}
 
-    if (!pmcData.resultList || !pmcData.resultList.result || pmcData.resultList.result.length === 0) {
-       return res.status(200).json({ results: [] });
+Generate a clean, professional, unquoted PubMed/EuropePMC search query optimized to catch cross-disciplinary and mechanistic connections. 
+- Do not include conversational filler.
+- Use boolean operators (AND, OR) and clean keyword groupings.
+- Focus on underlying pathways, target receptors, and physiological mechanisms.
+- Keep the total length concise enough for an API query.
+
+Respond with ONLY the raw query string.`;
+
+    const expansionRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}` 
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-120b', 
+        messages: [{ role: 'user', content: queryExpansionPrompt }]
+      })
+    });
+
+    const expansionData = await expansionRes.json();
+    let optimizedQuery = `${target} ${goal}`.trim();
+    if (expansionData.choices && expansionData.choices.length > 0) {
+      optimizedQuery = expansionData.choices[0].message.content.trim().replace(/^"|"$/g, '');
     }
 
-    // Format the real papers to show to Groq
-    const realPapers = pmcData.resultList.result.map(p => ({
+    // Phase 2: Fetch papers using the smart query
+    const pmcRes = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(optimizedQuery)}&format=json&resultType=core&pageSize=25`);
+    const pmcData = await pmcRes.json();
+
+    let realPapers = [];
+    if (pmcData.resultList && pmcData.resultList.result) {
+      realPapers = pmcData.resultList.result.map(p => ({
         title: p.title,
         url: p.doi ? `https://doi.org/${p.doi}` : `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/`,
         year: p.pubYear,
-        abstract: p.abstractText ? p.abstractText.substring(0, 400) + '...' : 'No abstract'
-    }));
+        abstract: p.abstractText ? p.abstractText.substring(0, 400) + '...' : 'No abstract available'
+      }));
+    }
 
-    // 2. The High-IQ System Prompt & Updated Schema
-    const systemPrompt = `You are an elite, highly open-minded scientific research assistant specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking. I will provide you with a list of REAL academic papers pulled from PubMed based on a user's target and goal.
+    // Phase 3: Run the core high-IQ synthesis evaluation
+    const systemPrompt = `You are an elite, highly open-minded scientific research assistant specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
 
-Your job is twofold:
-1. Write a direct, highly intelligent response to the user. Do not just repeat their goal; synthesize the biochemical, clinical, or mechanistic connection between their target and their goal. Think outside the box. Point out non-obvious pathways, lateral connections, or novel scientific overlaps.
-2. Evaluate the provided papers and select the top 8. For each paper, write a strict maximum 18-word "relevance" explanation that highlights *exactly* how it cross-links to the user's broader goal.
+Your task is twofold:
+1. Under "directResponse", provide a deep, high-IQ direct response explaining the conceptual, structural, biochemical, or clinical connection between the user's target and their goal. Even if zero literature matches are supplied below, use your extensive core knowledge to explore non-obvious pathways, lateral links, and theories.
+2. Evaluate the provided list of papers (if any) and select the top 8 most useful ones. Write a strict maximum 18-word "relevance" explanation for each, revealing how it cross-links the target to the goal.
 
 Respond with ONLY raw JSON matching exactly this schema:
 {
-  "directResponse": "string (Your deep-dive synthesis and direct response to the user's input, exploring open-minded cross-linking)",
+  "directResponse": "string (Deep-dive synthesis, mechanistic cross-linking explanation, and insights written directly to the researcher)",
   "results": [
     {
       "title": "string",
@@ -46,9 +72,8 @@ Respond with ONLY raw JSON matching exactly this schema:
   ]
 }`;
 
-    const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
+    const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers found via search term [${optimizedQuery}]:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
-    // Make the request to Groq using the high-IQ OpenAI 120B model
     const groqRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
       method: 'POST',
       headers: { 
@@ -72,16 +97,9 @@ Respond with ONLY raw JSON matching exactly this schema:
        throw new Error(`Groq rejected the request: ${groqData.error.message}`);
     }
     
-    if (!groqData.choices || groqData.choices.length === 0) {
-       console.error("GROQ BLOCKED RESPONSE:", JSON.stringify(groqData, null, 2));
-       throw new Error("Groq returned an empty response.");
-    }
-    
-    // Extract and parse the new JSON format
     const text = groqData.choices[0].message.content;
     const finalData = JSON.parse(text);
 
-    // 3. Send back to your frontend
     res.status(200).json(finalData);
 
   } catch (error) {
