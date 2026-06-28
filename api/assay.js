@@ -16,7 +16,7 @@ export default async function handler(req, res) {
        return res.status(200).json({ results: [] });
     }
 
-    // Format the real papers to show to DeepSeek
+    // Format the real papers to show to Groq
     const realPapers = pmcData.resultList.result.map(p => ({
         title: p.title,
         url: p.doi ? `https://doi.org/${p.doi}` : `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/`,
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         abstract: p.abstractText ? p.abstractText.substring(0, 300) + '...' : 'No abstract'
     }));
 
-    // 2. Send the REAL papers to DeepSeek to evaluate
+    // 2. Send the REAL papers to Groq to evaluate
     const systemPrompt = `You are a scientific literature assistant. I will provide you with a list of REAL academic papers pulled from PubMed/Europe PMC. 
 Your job is to evaluate which ones actually match the user's research goal, select the top 8, and write a strict maximum 18-word "relevance" explanation for why it matters to their goal.
 
@@ -33,38 +33,38 @@ Respond with ONLY raw JSON matching exactly this schema:
 
     const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
-    // Make the request to DeepSeek's API
-    const dsRes = await fetch(`https://api.deepseek.com/chat/completions`, {
+    // Make the request to Groq's insanely fast API
+    const groqRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` // Using standard Bearer auth
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}` 
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash', 
+        model: 'llama-3.3-70b-versatile', 
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        response_format: { type: 'json_object' } // Forces perfect JSON parsing
+        response_format: { type: 'json_object' } 
       })
     });
 
-    const dsData = await dsRes.json();
+    const groqData = await groqRes.json();
     
-    // Catch DeepSeek specific errors
-    if (dsData.error) {
-       console.error("DEEPSEEK API ERROR:", JSON.stringify(dsData.error, null, 2));
-       throw new Error(`DeepSeek rejected the request: ${dsData.error.message}`);
+    // Catch Groq specific errors
+    if (groqData.error) {
+       console.error("GROQ API ERROR:", JSON.stringify(groqData.error, null, 2));
+       throw new Error(`Groq rejected the request: ${groqData.error.message}`);
     }
     
-    if (!dsData.choices || dsData.choices.length === 0) {
-       console.error("DEEPSEEK BLOCKED RESPONSE:", JSON.stringify(dsData, null, 2));
-       throw new Error("DeepSeek returned an empty response.");
+    if (!groqData.choices || groqData.choices.length === 0) {
+       console.error("GROQ BLOCKED RESPONSE:", JSON.stringify(groqData, null, 2));
+       throw new Error("Groq returned an empty response.");
     }
     
-    // Extract and parse the JSON DeepSeek spits out
-    const text = dsData.choices[0].message.content;
+    // Extract and parse the JSON Groq spits out
+    const text = groqData.choices[0].message.content;
     const finalData = JSON.parse(text);
 
     // 3. Send back to your frontend
