@@ -33,12 +33,12 @@ Respond with ONLY raw JSON matching exactly this schema:
 
     const userPrompt = `Target type: ${typeLabel || 'unspecified'}\nTarget: ${target}\nGoal: ${goal || 'General info'}\n\nHere are the real papers I found:\n${JSON.stringify(realPapers, null, 2)}\n\nFilter and return the JSON.`;
 
-    // Make the request to Google's Gemini API passing the new AQ key through the correct header
-    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`, {
+    // Make the request to Google's Gemini API using the 3.5 Flash model
+    const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'x-goog-api-key': process.env.GEMINI_API_KEY // Correct header format for new AQ keys
+        'x-goog-api-key': process.env.GEMINI_API_KEY 
       },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
