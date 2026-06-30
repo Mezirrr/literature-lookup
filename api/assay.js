@@ -6,7 +6,7 @@ const TIER_LIMITS = {
   Free: 3,
   Starter: 50,
   Researcher: 200,
-  'Lab Rat': 999999   // effectively unlimited
+  'Lab Rat': 999999
 };
 
 const TIER_MAX_TOKENS = {
@@ -27,7 +27,7 @@ async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = 8000) 
       clearTimeout(timeoutId);
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status} – ${body.slice(0, 200)}`);
+        throw new Error('HTTP ' + response.status + ' – ' + body.slice(0, 200));
       }
       return response;
     } catch (error) {
@@ -50,18 +50,18 @@ async function maybeUpdateResearcherProfile(userId, newSearchCount) {
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(5);
-  if (!recent?.length) return;
+  if (!recent || !recent.length) return;
 
   const historyText = recent
-    .map((s, i) => `${i + 1}. Target(s): ${s.target_searched} | Goal: ${s.goal_input || 'n/a'}`)
+    .map((s, i) => (i + 1) + '. Target(s): ' + s.target_searched + ' | Goal: ' + (s.goal_input || 'n/a'))
     .join('\n');
 
-  const system = `You write extremely terse researcher‑focus summaries. Given recent search queries, output ONLY a single plain‑text synthesis, ≤50 words. No preamble, no JSON.`;
+  const system = 'You write extremely terse researcher‑focus summaries. Given recent search queries, output ONLY a single plain‑text synthesis, ≤50 words. No preamble, no JSON.';
 
   try {
     const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
         model: 'openai/gpt-oss-120b',
         messages: [
@@ -71,7 +71,7 @@ async function maybeUpdateResearcherProfile(userId, newSearchCount) {
       })
     }, 1, 6000);
     const data = await res.json();
-    const synth = data?.choices?.[0]?.message?.content?.trim();
+    const synth = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content ? data.choices[0].message.content.trim() : null;
     if (synth) {
       await supabaseAdmin.from('profiles').update({ researcher_profile: synth }).eq('id', userId);
     }
@@ -104,16 +104,15 @@ function extractJSON(str) {
   }
 }
 
-// Extract compound names from any string – looks for words that contain both letters and numbers
 function extractCompounds(text) {
   if (!text) return [];
   const tokens = text.match(/\b(?=.*[a-zA-Z])(?=.*\d)[A-Za-z0-9\-]+\b/g) || [];
-  return [...new Set(tokens)]; // unique
+  return [...new Set(tokens)];
 }
 
 export default async function handler(req, res) {
   const rid = Math.random().toString(36).slice(2, 8);
-  console.log(`[${rid}] Incoming assay request`);
+  console.log('[' + rid + '] Incoming assay request');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const authHeader = req.headers.authorization;
@@ -124,9 +123,9 @@ export default async function handler(req, res) {
     const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !authUser) throw authError;
     user = authUser;
-    console.log(`[${rid}] Auth OK – ${user.email}`);
+    console.log('[' + rid + '] Auth OK – ' + user.email);
   } catch (e) {
-    console.error(`[${rid}] Auth error:`, e);
+    console.error('[' + rid + '] Auth error:', e);
     return res.status(401).json({ error: 'Invalid session.' });
   }
 
@@ -162,7 +161,7 @@ export default async function handler(req, res) {
 
     if (user.email === 'mezirrr@protonmail.com') {
       if (profile.tier !== 'Lab Rat') {
-        console.log(`[${rid}] Super user detected – upgrading to Lab Rat`);
+        console.log('[' + rid + '] Super user detected – upgrading to Lab Rat');
         await supabaseAdmin.from('profiles').update({
           tier: 'Lab Rat',
           assays_used_this_month: 0,
@@ -174,18 +173,18 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log(`[${rid}] Profile – tier: ${profile.tier}, used: ${profile.assays_used_this_month}`);
+    console.log('[' + rid + '] Profile – tier: ' + profile.tier + ', used: ' + profile.assays_used_this_month);
   } catch (e) {
-    console.error(`[${rid}] Profile error:`, e);
+    console.error('[' + rid + '] Profile error:', e);
     return res.status(500).json({ error: 'Profile service error.' });
   }
 
   const period = currentPeriod();
   const used = profile.usage_period === period ? profile.assays_used_this_month : 0;
-  const limit = TIER_LIMITS[profile.tier] ?? TIER_LIMITS.Free;
+  const limit = TIER_LIMITS[profile.tier] || TIER_LIMITS.Free;
   if (used >= limit) {
     return res.status(403).json({
-      error: `Monthly limit reached (${profile.tier}: ${limit}). Please upgrade to continue.`
+      error: 'Monthly limit reached (' + profile.tier + ': ' + limit + '). Please upgrade to continue.'
     });
   }
 
@@ -200,28 +199,27 @@ export default async function handler(req, res) {
   const targetsHeading = targetsArray.join(', ');
   const s2ApiKey = "s2k-zRgzPNUsqrylk6ST4j78YbPFDcq74woh6HR4Uawp";
 
-  // Extract potential compound names from the goal AND from the targets themselves
   const compoundsFromGoal = extractCompounds(goal);
   const compoundsFromTargets = extractCompounds(targetsHeading);
   const allCompounds = [...new Set([...compoundsFromGoal, ...compoundsFromTargets])];
-  console.log(`[${rid}] Detected compounds: ${allCompounds.join(', ') || 'none'}`);
+  console.log('[' + rid + '] Detected compounds: ' + (allCompounds.join(', ') || 'none'));
 
   try {
     // ================== PHASE 1: ENHANCER ==================
     let enhancedGoal = goal || 'General pharmacological profile';
     let optimizedQueries = {};
 
-    const enhSystem = `You are a biomedical search strategist. For each target, generate up to 5 complementary, high-yield search strings that capture different facets of the user's goal. Use synonyms, alternative terminologies, and broader/narrower concepts to maximise recall. Return ONLY valid JSON: {"enhancedGoal":"technical reframing of the overall goal (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}`;
+    const enhSystem = 'You are a biomedical search strategist. For each target, generate up to 5 complementary, high-yield search strings that capture different facets of the user\'s goal. Use synonyms, alternative terminologies, and broader/narrower concepts to maximise recall. Return ONLY valid JSON: {"enhancedGoal":"technical reframing of the overall goal (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}';
 
     try {
       const enhRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
         body: JSON.stringify({
           model: 'openai/gpt-oss-120b',
           messages: [
             { role: 'system', content: enhSystem },
-            { role: 'user', content: `Targets: ${targetsHeading}\nRaw Goal: ${goal || 'General info'}` }
+            { role: 'user', content: 'Targets: ' + targetsHeading + '\nRaw Goal: ' + (goal || 'General info') }
           ]
         })
       }, 2, 6000);
@@ -241,25 +239,23 @@ export default async function handler(req, res) {
         }
       }
     } catch (e) {
-      console.warn(`[${rid}] Enhancer fallback:`, e.message);
+      console.warn('[' + rid + '] Enhancer fallback:', e.message);
       for (const t of targetsArray) {
-        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
+        optimizedQueries[t] = [t + ' ' + (goal || '').trim()];
       }
     }
 
-    // Force compound‑specific queries into the search
+    // Ensure each target has at least one query, and force compound queries
     for (const t of targetsArray) {
       if (!optimizedQueries[t]) optimizedQueries[t] = [];
-      // Raw goal query
-      const rawGoalQuery = `${t} ${goal || ''}`.trim();
+      const rawGoalQuery = (t + ' ' + (goal || '')).trim();
       if (!optimizedQueries[t].includes(rawGoalQuery)) {
         optimizedQueries[t].push(rawGoalQuery);
       }
-      // Compound + target queries (high priority)
       for (const comp of allCompounds) {
-        const compTargetQuery = `${comp} ${t}`;
+        const compTargetQuery = comp + ' ' + t;
         if (!optimizedQueries[t].some(q => q.toLowerCase().includes(comp.toLowerCase()))) {
-          optimizedQueries[t].unshift(compTargetQuery); // put at front for priority
+          optimizedQueries[t].unshift(compTargetQuery);
         }
       }
     }
@@ -272,8 +268,8 @@ export default async function handler(req, res) {
       for (let qi = 0; qi < queries.length; qi++) {
         if (qi > 0) await new Promise(r => setTimeout(r, 1200));
         const query = queries[qi];
-        console.log(`[${rid}] S2 query ${qi + 1}/${queries.length} for "${target}": "${query}"`);
-        const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=paperId,title,url,year,abstract`;
+        console.log('[' + rid + '] S2 query ' + (qi + 1) + '/' + queries.length + ' for "' + target + '": "' + query + '"');
+        const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(query) + '&limit=10&fields=paperId,title,url,year,abstract';
         try {
           const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
           const s2Data = await s2Res.json();
@@ -281,16 +277,16 @@ export default async function handler(req, res) {
           if (papers.length) {
             const mapped = papers.map(p => ({
               title: p.title || 'Untitled',
-              url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
+              url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
               year: p.year || 'Unknown',
-              abstract: p.abstract?.substring(0, 400) + '...' || '',
+              abstract: (p.abstract ? p.abstract.substring(0, 400) + '...' : ''),
               associatedTarget: target
             })).filter(p => p.url);
             targetPapers.push(...mapped);
           }
           if (targetPapers.length >= 8) break;
         } catch (err) {
-          console.error(`[${rid}] S2 error for "${query}":`, err.message);
+          console.error('[' + rid + '] S2 error for "' + query + '":', err.message);
         }
       }
       if (targetPapers.length === 0) {
@@ -300,25 +296,25 @@ export default async function handler(req, res) {
     }
 
     if (allPapers.length === 0) {
-      console.log(`[${rid}] Phase 2b: Last-ditch with raw goal`);
-      const lastQuery = `${targetsHeading} ${goal || ''}`.trim();
-      console.log(`[${rid}] Last-ditch query: "${lastQuery}"`);
+      console.log('[' + rid + '] Phase 2b: Last-ditch with raw goal');
+      const lastQuery = (targetsHeading + ' ' + (goal || '')).trim();
+      console.log('[' + rid + '] Last-ditch query: "' + lastQuery + '"');
       await new Promise(r => setTimeout(r, 1200));
-      const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(lastQuery)}&limit=10&fields=paperId,title,url,year,abstract`;
+      const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(lastQuery) + '&limit=10&fields=paperId,title,url,year,abstract';
       try {
         const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
         const s2Data = await s2Res.json();
         const papers = s2Data.data || [];
         const mapped = papers.map(p => ({
           title: p.title || 'Untitled',
-          url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
+          url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
           year: p.year || 'Unknown',
-          abstract: p.abstract?.substring(0, 400) + '...' || '',
+          abstract: (p.abstract ? p.abstract.substring(0, 400) + '...' : ''),
           associatedTarget: targetsHeading
         })).filter(p => p.url);
         allPapers.push(...mapped);
       } catch (e) {
-        console.warn(`[${rid}] Last-ditch failed:`, e.message);
+        console.warn('[' + rid + '] Last-ditch failed:', e.message);
       }
     }
 
@@ -329,49 +325,39 @@ export default async function handler(req, res) {
       return true;
     }).slice(0, 35);
 
-    console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
-    const initialPaperCount = uniquePapers.length;
+    console.log('[' + rid + '] Total unique papers: ' + uniquePapers.length);
 
-    // ================== PHASE 3: INITIAL SYNTHESIS ==================
+    // ================== PHASE 3: SYNTHESIS ==================
     const researcherContext = profile.researcher_profile
-      ? `\n\nKnown Researcher Focus Profile: ${profile.researcher_profile}`
+      ? '\n\nKnown Researcher Focus Profile: ' + profile.researcher_profile
       : '';
 
-    const systemPrompt = `You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
+    const systemPrompt = 'You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.\n\n' +
+      'Your task:\n' +
+      '1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (' + targetsHeading + ') and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument.\n' +
+      '2. **If the goal can be achieved or studied using specific small molecules, drugs, or compounds, mention up to 3 relevant examples (with names) and briefly state their known mechanisms, even if the supplied papers do not mention them.** Do this within the synthesis itself, after the main mechanistic explanation.\n' +
+      '3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).\n' +
+      '4. Under "results", include ONLY papers that are **directly relevant** to the user\'s specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:\n' +
+      '   - Write a ≤18-word relevance explanation.\n' +
+      '   - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.\n\n' +
+      'Return ONLY raw JSON matching:\n' +
+      '{\n  "directResponse": "string",\n  "followUpOptions": ["string","string","string"],\n  "results": [\n    { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }\n  ],\n  "confidence": "high|low|none"\n}\n' +
+      '- Set "confidence" to "high" if there are relevant papers that directly support the synthesis.\n' +
+      '- Set "confidence" to "low" if only a few tangential papers exist.\n' +
+      '- Set "confidence" to "none" if no papers were found – in that case the synthesis is based solely on general knowledge, and the "results" array must be empty [].' +
+      researcherContext;
 
-Your task:
-1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument.
-2. **If the goal can be achieved or studied using specific small molecules, drugs, or compounds, mention up to 3 relevant examples (with names) and briefly state their known mechanisms, even if the supplied papers do not mention them.** Do this within the synthesis itself, after the main mechanistic explanation.
-3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
-4. Under "results", include ONLY papers that are **directly relevant** to the user's specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:
-   - Write a ≤18-word relevance explanation.
-   - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
-
-Return ONLY raw JSON matching:
-{
-  "directResponse": "string",
-  "followUpOptions": ["string","string","string"],
-  "results": [
-    { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }
-  ],
-  "confidence": "high|low|none"
-}
-- Set "confidence" to "high" if there are relevant papers that directly support the synthesis.
-- Set "confidence" to "low" if only a few tangential papers exist.
-- Set "confidence" to "none" if no papers were found – in that case the synthesis is based solely on general knowledge, and the "results" array must be empty [].`${researcherContext}`;
-
-    const userPrompt = `Target type: ${typeLabel || 'unspecified'}
-All Inputs: ${targetsHeading}
-Original Goal: ${goal || 'General info'}
-Enhanced Context: ${enhancedGoal}
-Fallback active: ${fallbackTriggered}
-Papers: ${JSON.stringify(uniquePapers, null, 2)}
-
-Evaluate each paper. Only keep those that truly match the goal. Discard any paper that is about an unrelated topic. Return the JSON.`;
+    const userPrompt = 'Target type: ' + (typeLabel || 'unspecified') + '\n' +
+      'All Inputs: ' + targetsHeading + '\n' +
+      'Original Goal: ' + (goal || 'General info') + '\n' +
+      'Enhanced Context: ' + enhancedGoal + '\n' +
+      'Fallback active: ' + fallbackTriggered + '\n' +
+      'Papers: ' + JSON.stringify(uniquePapers, null, 2) + '\n\n' +
+      'Evaluate each paper. Only keep those that truly match the goal. Discard any paper that is about an unrelated topic. Return the JSON.';
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
         model: 'openai/gpt-oss-120b',
         messages: [
@@ -385,20 +371,22 @@ Evaluate each paper. Only keep those that truly match the goal. Discard any pape
 
     const groqData = await groqRes.json();
     const rawText = groqData.choices[0].message.content;
-    console.log(`[${rid}] Groq raw (first 300):`, rawText.slice(0, 300));
+    console.log('[' + rid + '] Groq raw (first 300):', rawText.slice(0, 300));
 
     let finalJson;
     try {
       finalJson = extractJSON(rawText);
     } catch (e) {
-      console.error(`[${rid}] JSON parse failed:`, e.message);
+      console.error('[' + rid + '] JSON parse failed:', e.message);
       return res.status(500).json({ error: 'AI returned invalid format.' });
     }
 
-    // Ensure confidence field exists
     if (!finalJson.confidence) {
       finalJson.confidence = finalJson.results && finalJson.results.length > 0 ? 'low' : 'none';
     }
+
+    finalJson.isFallback = fallbackTriggered;
+    if (finalJson.results) finalJson.results.forEach(r => r.source = 'Semantic Scholar');
 
     // Usage update
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
@@ -420,7 +408,7 @@ Evaluate each paper. Only keep those that truly match the goal. Discard any pape
 
     return res.status(200).json(finalJson);
   } catch (error) {
-    console.error(`[${rid}] ❌ UNHANDLED:`, error);
-    return res.status(500).json({ error: `Pipeline error: ${error.message.slice(0, 150)}` });
+    console.error('[' + rid + '] ❌ UNHANDLED:', error);
+    return res.status(500).json({ error: 'Pipeline error: ' + error.message.slice(0, 150) });
   }
 }
