@@ -6,7 +6,7 @@ const TIER_LIMITS = {
   Free: 3,
   Starter: 50,
   Researcher: 200,
-  'Lab Rat': 999999
+  'Lab Rat': 999999   // effectively unlimited
 };
 
 const TIER_MAX_TOKENS = {
@@ -123,6 +123,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid session.' });
   }
 
+  // ---------- Profile ----------
   let profile;
   try {
     const { data, error } = await supabaseAdmin
@@ -194,10 +195,11 @@ export default async function handler(req, res) {
 
   try {
     // ================== PHASE 1: ENHANCER ==================
+    // Now explicitly told to generate bone‑focused queries, not generic ones
     let enhancedGoal = goal || 'General pharmacological profile';
     let optimizedQueries = {};
 
-    const enhSystem = `You are a biomedical search strategist. For each target, generate up to 5 complementary, high-yield search strings that capture different facets of the user's goal. Use synonyms, alternative terminologies, and broader/narrower concepts to maximise recall. Return ONLY valid JSON: {"enhancedGoal":"technical reframing (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}`;
+    const enhSystem = `You are a biomedical search strategist. For each target, generate up to 5 highly specific, high-yield search strings that capture different facets of the user's goal, especially focusing on the biological mechanisms mentioned. The queries MUST contain the target name and keywords from the goal, such as "bone growth", "longitudinal", "periosteal", "osteoblast", "chondrocyte". Avoid generic queries like just the target name alone. Return ONLY valid JSON: {"enhancedGoal":"technical reframing (1-2 sentences, bone-centric)", "optimizedQueries":{"TargetName":["query1","query2",...]}}`;
 
     try {
       const enhRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
@@ -233,12 +235,13 @@ export default async function handler(req, res) {
       }
     }
 
+    // Ensure each target has at least one bone‑related query
     for (const t of targetsArray) {
       if (!optimizedQueries[t] || optimizedQueries[t].length === 0) {
-        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
+        optimizedQueries[t] = [`${t} ${goal || ''} bone growth`];
       }
       if (!optimizedQueries[t].includes(t)) {
-        optimizedQueries[t].push(t);
+        optimizedQueries[t].push(`${t} ${goal || ''} bone`);
       }
     }
 
@@ -250,6 +253,7 @@ export default async function handler(req, res) {
       for (let qi = 0; qi < queries.length; qi++) {
         if (qi > 0) await new Promise(r => setTimeout(r, 1200));
         const query = queries[qi];
+        console.log(`[${rid}] S2 query ${qi + 1}/${queries.length} for "${target}": "${query}"`);
         const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=paperId,title,url,year,abstract`;
         try {
           const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
@@ -276,7 +280,9 @@ export default async function handler(req, res) {
       allPapers.push(...targetPapers);
     }
 
+    // Last-ditch search if no papers at all
     if (allPapers.length === 0) {
+      console.log(`[${rid}] Phase 2b: Last-ditch`);
       try {
         const lastRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -292,6 +298,7 @@ export default async function handler(req, res) {
         const lastData = await lastRes.json();
         let lastQuery = lastData?.choices?.[0]?.message?.content?.trim();
         if (lastQuery && lastQuery.length > 3) {
+          console.log(`[${rid}] Last-ditch query: "${lastQuery}"`);
           await new Promise(r => setTimeout(r, 1200));
           const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(lastQuery)}&limit=10&fields=paperId,title,url,year,abstract`;
           const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
@@ -318,7 +325,9 @@ export default async function handler(req, res) {
       return true;
     }).slice(0, 35);
 
-    // ================== PHASE 3: SYNTHESIS ==================
+    console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
+
+    // ================== PHASE 3: SYNTHESIS (strict relevance filtering) ==================
     const researcherContext = profile.researcher_profile
       ? `\n\nKnown Researcher Focus Profile: ${profile.researcher_profile}`
       : '';
@@ -326,10 +335,10 @@ export default async function handler(req, res) {
     const systemPrompt = `You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
 
 Your task:
-1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge to deliver a thorough mechanistic analysis. Only incorporate paper details when they genuinely support the argument.
+1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument.
 2. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
-3. Under "results", include ALL papers from the supplied list that are even loosely relevant to the topic. Do not discard papers unless they are completely unrelated. For each paper:
-   - Write a ≤18-word relevance explanation linking the paper to the query.
+3. Under "results", include ONLY papers that are **directly related** to the user's specific query. A paper must clearly discuss bone growth, osteogenesis, chondrogenesis, or skeletal physiology in the context of the target(s). **Completely discard papers about unrelated topics** such as COVID-19, hair loss (alopecia), vascular dementia, or other systemic diseases unless they explicitly examine bone growth mechanisms. If no paper in the supplied list meets these criteria, set "results" to an empty array []. Do not force irrelevant papers into the output just to fill the list. For the papers you do keep:
+   - Write a ≤18-word relevance explanation.
    - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
 
 Return ONLY raw JSON matching:
@@ -348,7 +357,7 @@ Enhanced Context: ${enhancedGoal}
 Fallback active: ${fallbackTriggered}
 Papers: ${JSON.stringify(uniquePapers, null, 2)}
 
-Filter and return the JSON.`;
+Evaluate each paper's abstract and title. Only include those that are directly about bone growth and the target. Discard any paper that is off-topic (e.g., about COVID-19, hair loss, vascular function) unless it explicitly studies bone. Return the JSON.`;
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -379,6 +388,7 @@ Filter and return the JSON.`;
     finalJson.isFallback = fallbackTriggered;
     if (finalJson.results) finalJson.results.forEach(r => r.source = 'Semantic Scholar');
 
+    // Usage update
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
     const newCount = (profile.search_count || 0) + 1;
 
