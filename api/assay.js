@@ -175,25 +175,33 @@ export default async function handler(req, res) {
     const uniquePapers = allPapers.filter(p=>{ if(!p.url||seen.has(p.url)) return false; seen.add(p.url); return true; }).slice(0,35);
     console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
 
-    // Synthesis
+    // ========== UPGRADED SYNTHESIS ENGINE ==========
+    // 1. Initial synthesis with chain‑of‑thought and explicit reasoning trace
     const researcherContext = profile.researcher_profile ? `\n\nKnown Researcher Focus Profile: ${profile.researcher_profile}` : '';
-    const systemPrompt = `You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
+    const systemPrompt = `You are a 150-IQ elite biochemical intelligence engine that performs deep, multi‑step reasoning.
 
-Your task:
-1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Use your extensive biomedical knowledge** to deliver a thorough mechanistic analysis, even if the supplied papers are not perfectly aligned. Only incorporate paper details when they genuinely support the argument.
-2. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
-3. Under "results", include ONLY papers that are **directly relevant** to the specific query. If none of the supplied papers are closely related, **set results to an empty array []** and rely on your knowledge for the directResponse. Do not force irrelevant papers just to fill the list. For relevant papers:
-   - Write a ≤18-word relevance explanation.
-   - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
+**You must follow this reasoning pipeline before writing the final JSON:**
 
-Return ONLY raw JSON matching:
+1. **Deconstruct** the target list (${targetsHeading}) and the discovery goal into 3–5 mechanistic sub‑questions (e.g., "How does target X affect pathway Y under resistance pressure?").
+2. **Internally retrieve** relevant knowledge for each sub‑question – include quantitative data (frequencies, IC50s, temporal dynamics), known resistance nodes, and therapeutic vulnerabilities.
+3. **Cross‑link** the sub‑answers to identify non‑obvious emergent properties (e.g., paradoxical effects, metabolic rewiring, immune crosstalk).
+4. **Synthesise** a hyper‑analytical "directResponse" that integrates all insights into a coherent narrative (≥200 words).
+5. **Self‑critique** your synthesis: note any counter‑evidence, alternative interpretations, or missing mechanistic links. Include this in the "reasoningTrace" field (≤120 words).
+
+**Output ONLY valid JSON** with the following fields:
 {
-  "directResponse": "string",
-  "followUpOptions": ["string","string","string"],
-  "results": [
-    { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }
-  ]
-}${researcherContext}`;
+  "directResponse": "string (≥200 words)",
+  "followUpOptions": ["string","string","string"] (each ≤12 words),
+  "results": [ { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string (≤18 words)", "studyType":"In Vitro | In Vivo | Human" } ],
+  "reasoningTrace": "string (your internal deconstruction, sub‑questions, and self‑critique, ≤120 words)"
+}
+
+**Rules for "results":**
+- Include ONLY papers that are **directly relevant** to the specific query.
+- If none of the supplied papers are closely related, set "results" to an empty array [] and rely on your own knowledge for the directResponse.
+- For relevant papers, provide a concise relevance explanation and classify studyType (default to "In Vivo" if ambiguous).
+
+${researcherContext}`;
 
     const userPrompt = `Target type: ${typeLabel||'unspecified'}
 All Inputs: ${targetsHeading}
@@ -202,12 +210,12 @@ Enhanced Context: ${enhancedGoal}
 Fallback active: ${fallbackTriggered}
 Papers: ${JSON.stringify(uniquePapers, null, 2)}
 
-Filter and return the JSON.`;
+Proceed with your reasoning pipeline and return the JSON.`;
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${process.env.GROQ_API_KEY}` },
-      body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], max_tokens:5000, temperature:0.5 })
+      body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], max_tokens:6767, temperature:0.5 })
     }, 2, 12000);
 
     const groqData = await groqRes.json();
@@ -223,8 +231,45 @@ Filter and return the JSON.`;
       return res.status(500).json({ error:'AI returned invalid format.' });
     }
 
+    // 2. Refinement pass (critique and improve the directResponse)
+    try {
+      if (finalJson.directResponse && finalJson.directResponse.length > 50) {
+        console.log(`[${rid}] Starting refinement pass...`);
+        const critiquePrompt = `You are a ruthless peer reviewer. Given this draft response:
+
+${JSON.stringify(finalJson, null, 2)}
+
+Identify **3 specific gaps** in the directResponse: missing mechanisms, over‑simplifications, unsupported claims, or overlooked therapeutic implications.
+Then, rewrite the entire JSON with an **improved directResponse** that addresses these gaps. Keep all other fields unchanged, but you may also refine the follow‑up questions if they become less relevant.
+
+Return ONLY the revised JSON in the same structure.`;
+
+        const refineRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${process.env.GROQ_API_KEY}` },
+          body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:'You are a rigorous biomedical critic who improves drafts.'},{role:'user',content:critiquePrompt}], max_tokens:6767, temperature:0.3 })
+        }, 1, 12000);
+
+        const refineData = await refineRes.json();
+        const refinedText = refineData.choices[0].message.content;
+        const refinedJson = extractJSON(refinedText);
+        // Overwrite only if valid and contains required fields
+        if (refinedJson.directResponse && refinedJson.followUpOptions && refinedJson.results !== undefined) {
+          finalJson = refinedJson;
+          console.log(`[${rid}] Refinement succeeded.`);
+        } else {
+          console.warn(`[${rid}] Refinement returned invalid JSON, keeping original.`);
+        }
+      }
+    } catch(e) {
+      console.warn(`[${rid}] Refinement failed:`, e.message);
+      // keep original
+    }
+
     finalJson.isFallback = fallbackTriggered;
     if (finalJson.results) finalJson.results.forEach(r=>r.source='Semantic Scholar');
+    // Ensure reasoningTrace exists for debugging (optional)
+    if (!finalJson.reasoningTrace) finalJson.reasoningTrace = 'Reasoning trace not provided.';
 
     // Usage update
     const period = currentPeriod();
