@@ -167,10 +167,22 @@ export default async function handler(req, res) {
   const s2ApiKey = "s2k-zRgzPNUsqrylk6ST4j78YbPFDcq74woh6HR4Uawp";
 
   try {
-    // PHASE 1: Enhancer
-    console.log(`[${requestId}] Phase 1: Enhancer`);
+    // ================== PHASE 1: ENHANCER (multi-query) ==================
+    console.log(`[${requestId}] Phase 1: Enhancer (multi-query)`);
     let enhancedGoal = goal || 'General pharmacological profile';
     let optimizedQueries = {};
+
+    const enhancerSystem = `You are a biomedical search strategist. For each target, generate up to 3 complementary, high-yield search strings that capture different facets of the user's goal (e.g., mechanisms, case reports, related pathways). Use synonyms and broader/narrower terms to maximise recall.
+
+Return ONLY valid JSON:
+{
+  "enhancedGoal": "technical reframing of the overall goal (1-2 sentences)",
+  "optimizedQueries": {
+    "TargetName": ["query string 1", "query string 2", ...]
+  }
+}`;
+
+    const enhancerUser = `Targets: ${targetsHeading}\nRaw Goal: ${goal || 'General info'}`;
 
     try {
       const enhRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
@@ -182,8 +194,8 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: 'openai/gpt-oss-120b',
           messages: [
-            { role: 'system', content: 'Return ONLY valid JSON: { "enhancedGoal": "technical reframing", "optimizedQueries": { "TargetName": "keyword string" } }' },
-            { role: 'user', content: `Targets: ${targetsHeading}\nRaw Goal: ${goal || 'General info'}` }
+            { role: 'system', content: enhancerSystem },
+            { role: 'user', content: enhancerUser }
           ]
         })
       }, 2, 6000);
@@ -192,44 +204,75 @@ export default async function handler(req, res) {
       const raw = enhData.choices[0].message.content;
       const parsed = extractJSON(raw);
       enhancedGoal = parsed.enhancedGoal || enhancedGoal;
-      optimizedQueries = parsed.optimizedQueries || {};
+      const rawQueries = parsed.optimizedQueries || {};
+      for (const [t, q] of Object.entries(rawQueries)) {
+        if (Array.isArray(q)) {
+          optimizedQueries[t] = q.filter(s => typeof s === 'string' && s.trim().length > 0);
+        } else if (typeof q === 'string' && q.trim().length > 0) {
+          optimizedQueries[t] = [q];
+        } else {
+          optimizedQueries[t] = [];
+        }
+      }
     } catch (e) {
-      console.warn(`[${requestId}] Enhancer fallback:`, e.message);
+      console.warn(`[${requestId}] Enhancer failed, fallback:`, e.message);
+      for (const t of targetsArray) {
+        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
+      }
     }
 
-    // PHASE 2: Semantic Scholar
-    console.log(`[${requestId}] Phase 2: S2`);
+    // Ensure every target has at least one query and a raw name fallback
+    for (const t of targetsArray) {
+      if (!optimizedQueries[t] || optimizedQueries[t].length === 0) {
+        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
+      }
+      if (!optimizedQueries[t].includes(t)) {
+        optimizedQueries[t].push(t);
+      }
+    }
+
+    // ================== PHASE 2: SEMANTIC SCHOLAR (multi-query) ==================
+    console.log(`[${requestId}] Phase 2: S2 (multi-query)`);
     let allPapers = [];
     let fallbackTriggered = false;
 
-    for (let i = 0; i < targetsArray.length; i++) {
-      const target = targetsArray[i];
-      if (i > 0) await new Promise(r => setTimeout(r, 1200));
-      let query = optimizedQueries[target] || `${target} ${enhancedGoal}`;
-      let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=15&fields=paperId,title,url,year,abstract`;
+    for (const target of targetsArray) {
+      const queries = optimizedQueries[target] || [target];
+      let targetPapers = [];
 
-      try {
-        let s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
-        let s2Data = await s2Res.json();
-        let papers = s2Data.data || [];
-        if (papers.length === 0) {
-          fallbackTriggered = true;
-          await new Promise(r => setTimeout(r, 1200));
-          url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(target)}&limit=15&fields=paperId,title,url,year,abstract`;
-          s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
-          s2Data = await s2Res.json();
-          papers = s2Data.data || [];
+      for (let qi = 0; qi < queries.length; qi++) {
+        if (qi > 0) await new Promise(r => setTimeout(r, 1200));
+
+        const query = queries[qi];
+        console.log(`[${requestId}] S2 query ${qi + 1}/${queries.length} for "${target}": "${query}"`);
+        const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=paperId,title,url,year,abstract`;
+
+        try {
+          const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
+          const s2Data = await s2Res.json();
+          const papers = s2Data.data || [];
+          if (papers.length > 0) {
+            const mapped = papers.map(p => ({
+              title: p.title || 'Untitled',
+              url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
+              year: p.year || 'Unknown',
+              abstract: p.abstract?.substring(0, 400) + '...' || '',
+              associatedTarget: target
+            })).filter(p => p.url);
+            targetPapers.push(...mapped);
+          }
+          if (targetPapers.length >= 8) break;
+        } catch (err) {
+          console.error(`[${requestId}] S2 error for query "${query}":`, err.message);
         }
-        allPapers.push(...papers.map(p => ({
-          title: p.title || 'Untitled',
-          url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
-          year: p.year || 'Unknown',
-          abstract: p.abstract?.substring(0, 400) + '...' || '',
-          associatedTarget: target
-        })).filter(p => p.url));
-      } catch (err) {
-        console.error(`[${requestId}] S2 error for ${target}:`, err.message);
       }
+
+      if (targetPapers.length === 0) {
+        fallbackTriggered = true;
+        console.log(`[${requestId}] All queries failed for "${target}", marking fallback.`);
+      }
+
+      allPapers.push(...targetPapers);
     }
 
     const seen = new Set();
@@ -239,21 +282,24 @@ export default async function handler(req, res) {
       return true;
     }).slice(0, 35);
 
-    // ================== PHASE 3: SYNTHESIS (DEEP CROSS-LINKING) ==================
-    console.log(`[${requestId}] Phase 3: Synthesis`);
+    console.log(`[${requestId}] Total unique papers: ${uniquePapers.length}`);
+
+    // ================== PHASE 3: SYNTHESIS (grounded, primary-mechanism-first) ==================
+    console.log(`[${requestId}] Phase 3: Synthesis (canonical mechanism anchored)`);
     const researcherContext = profile.researcher_profile
       ? `\n\nResearcher Focus Profile: ${profile.researcher_profile}`
       : '';
 
-    const systemPrompt = `You are an elite 130‑IQ biomedical intelligence engine. Your analysis must be relentlessly deep, tracing every non‑obvious biochemical thread—including immune evasion, metabolic rewiring, epigenetic modulation, and feedback loops—whenever the source papers provide plausible mechanistic hints. Do not merely list resistance nodes; map the hidden crosstalk that could be exploited therapeutically.
+    const systemPrompt = `You are an elite 130‑IQ biomedical intelligence engine. Your analysis must be relentlessly precise and anchored in the most well‑established, canonical molecular mechanisms first—only then may you expand into secondary, less direct crosstalk if the source papers clearly support it. Do not invent elaborate pathways that are not the primary drivers of the observed effect.
 
-For the "directResponse" (around 200 words, freely expand if needed), deliver a hyper‑analytical synthesis that:
-- Explicitly connects the molecular cascades of the input targets (${targetsHeading}) with quantitative context (prevalence, binding affinities, clinical trial rates) only when the papers supply it.
-- Uncovers emergent properties: e.g., MEK inhibition upregulating PD‑L1 via ERK–c‑Fos, leading to T‑cell exhaustion; EGFR blockade altering glycolytic flux and sensitizing to OXPHOS inhibitors; EMT‑driven feedback activating YAP/TAZ.
-- Proposes novel combination hypotheses or a decision tree based on these non‑obvious connections.
-- Avoids generic safety disclaimers and fluff. Be intellectually fearless and precise.
+For the "directResponse" (around 200 words, freely expand if needed):
+1. **Identify and deeply explain the primary molecular mechanism(s)** linking the input targets (${targetsHeading}) to the user’s goal. Use quantitative context (prevalence, binding affinities, clinical rates) only when the papers supply it.
+2. **Explain how this mechanism directly produces the observed outcome** (e.g., FGFR inhibition → reduced STAT1/p21 activity → chondrocyte proliferation → bone overgrowth).
+3. **Then**, and only then, mention secondary contributing pathways (e.g., MAPK feedback, metabolic shifts, epigenetic changes) if they are actually evidenced in the supplied papers and relevant. Do not treat tangential links as central.
+4. Propose a concise decision framework or therapeutic hypothesis based on the primary mechanism, with potential secondary nodes if supported.
+5. Avoid generic safety disclaimers, fluff, or hedging. Be intellectually fearless but must stay true to the literature.
 
-For "followUpOptions": exactly 3 strings (each ≤12 words) probing cascading enzymatic steps, structural affinities, or innovative therapeutic angles.
+For "followUpOptions": exactly 3 strings (each ≤12 words) probing cascading enzymatic steps, structural affinities, or innovative therapeutic angles that arise from the primary mechanism.
 
 For "results": select the top relevant papers (max 15). For each:
 - Write a relevance explanation ≤18 words linking findings directly to the target matrix.
