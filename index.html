@@ -851,9 +851,11 @@
           });
         });
 
-        // Downgrade to Free
+        // Downgrade to Free with confirmation
         document.getElementById('downgradeToFree').addEventListener('click', async () => {
           if (!currentUser) return;
+          if (!confirm('Are you sure? You will lose all your current plan benefits (more runs, higher tokens, extra features).')) return;
+
           const session = await getSession();
           if (!session) return showToast('Please log in again.');
           try {
@@ -865,11 +867,14 @@
               },
               body: JSON.stringify({ tier: 'Free' })
             });
-            if (!res.ok) throw new Error('Failed');
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || 'Failed');
+            }
             showToast('Downgraded to Free plan.', 3000);
             await updateProfileUI();
           } catch (e) {
-            showToast('Could not downgrade. Try again.', 3000);
+            showToast(e.message || 'Could not downgrade. Try again.', 3000);
           }
         });
       }
