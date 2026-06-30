@@ -194,12 +194,11 @@ export default async function handler(req, res) {
   const s2ApiKey = "s2k-zRgzPNUsqrylk6ST4j78YbPFDcq74woh6HR4Uawp";
 
   try {
-    // ================== PHASE 1: ENHANCER ==================
-    // Now explicitly told to generate bone‑focused queries, not generic ones
+    // ================== PHASE 1: ENHANCER (general purpose, no bone bias) ==================
     let enhancedGoal = goal || 'General pharmacological profile';
     let optimizedQueries = {};
 
-    const enhSystem = `You are a biomedical search strategist. For each target, generate up to 5 highly specific, high-yield search strings that capture different facets of the user's goal, especially focusing on the biological mechanisms mentioned. The queries MUST contain the target name and keywords from the goal, such as "bone growth", "longitudinal", "periosteal", "osteoblast", "chondrocyte". Avoid generic queries like just the target name alone. Return ONLY valid JSON: {"enhancedGoal":"technical reframing (1-2 sentences, bone-centric)", "optimizedQueries":{"TargetName":["query1","query2",...]}}`;
+    const enhSystem = `You are a biomedical search strategist. For each target, generate up to 5 complementary, high-yield search strings that capture different facets of the user's goal. Use synonyms, alternative terminologies, and broader/narrower concepts to maximise recall. Return ONLY valid JSON: {"enhancedGoal":"technical reframing of the overall goal (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}`;
 
     try {
       const enhRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
@@ -235,13 +234,13 @@ export default async function handler(req, res) {
       }
     }
 
-    // Ensure each target has at least one bone‑related query
+    // Ensure each target has at least one query
     for (const t of targetsArray) {
       if (!optimizedQueries[t] || optimizedQueries[t].length === 0) {
-        optimizedQueries[t] = [`${t} ${goal || ''} bone growth`];
+        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
       }
       if (!optimizedQueries[t].includes(t)) {
-        optimizedQueries[t].push(`${t} ${goal || ''} bone`);
+        optimizedQueries[t].push(`${t} ${goal || ''}`.trim());
       }
     }
 
@@ -280,7 +279,6 @@ export default async function handler(req, res) {
       allPapers.push(...targetPapers);
     }
 
-    // Last-ditch search if no papers at all
     if (allPapers.length === 0) {
       console.log(`[${rid}] Phase 2b: Last-ditch`);
       try {
@@ -327,7 +325,7 @@ export default async function handler(req, res) {
 
     console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
 
-    // ================== PHASE 3: SYNTHESIS (strict relevance filtering) ==================
+    // ================== PHASE 3: SYNTHESIS (general relevance filtering, no bone lock) ==================
     const researcherContext = profile.researcher_profile
       ? `\n\nKnown Researcher Focus Profile: ${profile.researcher_profile}`
       : '';
@@ -337,7 +335,7 @@ export default async function handler(req, res) {
 Your task:
 1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument.
 2. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
-3. Under "results", include ONLY papers that are **directly related** to the user's specific query. A paper must clearly discuss bone growth, osteogenesis, chondrogenesis, or skeletal physiology in the context of the target(s). **Completely discard papers about unrelated topics** such as COVID-19, hair loss (alopecia), vascular dementia, or other systemic diseases unless they explicitly examine bone growth mechanisms. If no paper in the supplied list meets these criteria, set "results" to an empty array []. Do not force irrelevant papers into the output just to fill the list. For the papers you do keep:
+3. Under "results", include ONLY papers that are **directly relevant** to the user's specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. A paper is off-topic if it discusses a completely different biological function, disease, or context not related to the goal. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:
    - Write a ≤18-word relevance explanation.
    - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
 
@@ -357,7 +355,7 @@ Enhanced Context: ${enhancedGoal}
 Fallback active: ${fallbackTriggered}
 Papers: ${JSON.stringify(uniquePapers, null, 2)}
 
-Evaluate each paper's abstract and title. Only include those that are directly about bone growth and the target. Discard any paper that is off-topic (e.g., about COVID-19, hair loss, vascular function) unless it explicitly studies bone. Return the JSON.`;
+Evaluate each paper. Only keep those that truly match the goal. Discard any paper that is about an unrelated topic. Return the JSON.`;
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
