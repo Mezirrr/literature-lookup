@@ -6,7 +6,7 @@ const TIER_LIMITS = {
   Free: 3,
   Starter: 50,
   Researcher: 200,
-  'Lab Rat': 999999
+  'Lab Rat': 999999   // effectively unlimited
 };
 
 const TIER_MAX_TOKENS = {
@@ -104,6 +104,13 @@ function extractJSON(str) {
   }
 }
 
+// Extract compound names from any string – looks for words that contain both letters and numbers
+function extractCompounds(text) {
+  if (!text) return [];
+  const tokens = text.match(/\b(?=.*[a-zA-Z])(?=.*\d)[A-Za-z0-9\-]+\b/g) || [];
+  return [...new Set(tokens)]; // unique
+}
+
 export default async function handler(req, res) {
   const rid = Math.random().toString(36).slice(2, 8);
   console.log(`[${rid}] Incoming assay request`);
@@ -193,6 +200,12 @@ export default async function handler(req, res) {
   const targetsHeading = targetsArray.join(', ');
   const s2ApiKey = "s2k-zRgzPNUsqrylk6ST4j78YbPFDcq74woh6HR4Uawp";
 
+  // Extract potential compound names from the goal AND from the targets themselves
+  const compoundsFromGoal = extractCompounds(goal);
+  const compoundsFromTargets = extractCompounds(targetsHeading);
+  const allCompounds = [...new Set([...compoundsFromGoal, ...compoundsFromTargets])];
+  console.log(`[${rid}] Detected compounds: ${allCompounds.join(', ') || 'none'}`);
+
   try {
     // ================== PHASE 1: ENHANCER ==================
     let enhancedGoal = goal || 'General pharmacological profile';
@@ -234,12 +247,20 @@ export default async function handler(req, res) {
       }
     }
 
+    // Force compound‑specific queries into the search
     for (const t of targetsArray) {
-      if (!optimizedQueries[t] || optimizedQueries[t].length === 0) {
-        optimizedQueries[t] = [`${t} ${goal || ''}`.trim()];
+      if (!optimizedQueries[t]) optimizedQueries[t] = [];
+      // Raw goal query
+      const rawGoalQuery = `${t} ${goal || ''}`.trim();
+      if (!optimizedQueries[t].includes(rawGoalQuery)) {
+        optimizedQueries[t].push(rawGoalQuery);
       }
-      if (!optimizedQueries[t].includes(t)) {
-        optimizedQueries[t].push(`${t} ${goal || ''}`.trim());
+      // Compound + target queries (high priority)
+      for (const comp of allCompounds) {
+        const compTargetQuery = `${comp} ${t}`;
+        if (!optimizedQueries[t].some(q => q.toLowerCase().includes(comp.toLowerCase()))) {
+          optimizedQueries[t].unshift(compTargetQuery); // put at front for priority
+        }
       }
     }
 
@@ -279,37 +300,23 @@ export default async function handler(req, res) {
     }
 
     if (allPapers.length === 0) {
-      console.log(`[${rid}] Phase 2b: Last-ditch`);
+      console.log(`[${rid}] Phase 2b: Last-ditch with raw goal`);
+      const lastQuery = `${targetsHeading} ${goal || ''}`.trim();
+      console.log(`[${rid}] Last-ditch query: "${lastQuery}"`);
+      await new Promise(r => setTimeout(r, 1200));
+      const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(lastQuery)}&limit=10&fields=paperId,title,url,year,abstract`;
       try {
-        const lastRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
-          body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
-            messages: [
-              { role: 'system', content: 'You are a search expert. Given a biomedical goal and target, output a single, extremely effective search query string (max 15 words) that would find relevant scientific literature. Return ONLY the query string, no JSON, no extra text.' },
-              { role: 'user', content: `Targets: ${targetsHeading}\nGoal: ${goal || 'General info'}` }
-            ]
-          })
-        }, 1, 5000);
-        const lastData = await lastRes.json();
-        let lastQuery = lastData?.choices?.[0]?.message?.content?.trim();
-        if (lastQuery && lastQuery.length > 3) {
-          console.log(`[${rid}] Last-ditch query: "${lastQuery}"`);
-          await new Promise(r => setTimeout(r, 1200));
-          const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(lastQuery)}&limit=10&fields=paperId,title,url,year,abstract`;
-          const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
-          const s2Data = await s2Res.json();
-          const papers = s2Data.data || [];
-          const mapped = papers.map(p => ({
-            title: p.title || 'Untitled',
-            url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
-            year: p.year || 'Unknown',
-            abstract: p.abstract?.substring(0, 400) + '...' || '',
-            associatedTarget: targetsHeading
-          })).filter(p => p.url);
-          allPapers.push(...mapped);
-        }
+        const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
+        const s2Data = await s2Res.json();
+        const papers = s2Data.data || [];
+        const mapped = papers.map(p => ({
+          title: p.title || 'Untitled',
+          url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
+          year: p.year || 'Unknown',
+          abstract: p.abstract?.substring(0, 400) + '...' || '',
+          associatedTarget: targetsHeading
+        })).filter(p => p.url);
+        allPapers.push(...mapped);
       } catch (e) {
         console.warn(`[${rid}] Last-ditch failed:`, e.message);
       }
@@ -323,6 +330,7 @@ export default async function handler(req, res) {
     }).slice(0, 35);
 
     console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
+    const initialPaperCount = uniquePapers.length;
 
     // ================== PHASE 3: INITIAL SYNTHESIS ==================
     const researcherContext = profile.researcher_profile
@@ -333,8 +341,9 @@ export default async function handler(req, res) {
 
 Your task:
 1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument.
-2. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
-3. Under "results", include ONLY papers that are **directly relevant** to the user's specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:
+2. **If the goal can be achieved or studied using specific small molecules, drugs, or compounds, mention up to 3 relevant examples (with names) and briefly state their known mechanisms, even if the supplied papers do not mention them.** Do this within the synthesis itself, after the main mechanistic explanation.
+3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
+4. Under "results", include ONLY papers that are **directly relevant** to the user's specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:
    - Write a ≤18-word relevance explanation.
    - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
 
@@ -344,8 +353,12 @@ Return ONLY raw JSON matching:
   "followUpOptions": ["string","string","string"],
   "results": [
     { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }
-  ]
-}${researcherContext}`;
+  ],
+  "confidence": "high|low|none"
+}
+- Set "confidence" to "high" if there are relevant papers that directly support the synthesis.
+- Set "confidence" to "low" if only a few tangential papers exist.
+- Set "confidence" to "none" if no papers were found – in that case the synthesis is based solely on general knowledge, and the "results" array must be empty [].`${researcherContext}`;
 
     const userPrompt = `Target type: ${typeLabel || 'unspecified'}
 All Inputs: ${targetsHeading}
@@ -382,105 +395,10 @@ Evaluate each paper. Only keep those that truly match the goal. Discard any pape
       return res.status(500).json({ error: 'AI returned invalid format.' });
     }
 
-    // ================== PHASE 4: GAP‑FILLING (if <5 relevant results) ==================
-    if (finalJson.results && finalJson.results.length < 5) {
-      console.log(`[${rid}] Only ${finalJson.results.length} results – gap‑filling initiated.`);
-      try {
-        // Extract key concepts from the synthesis
-        const gapExtractSystem = `You are a search strategy assistant. Based on the biomedical synthesis below, output a JSON array of up to 3 precise search strings (each ≤15 words) that would retrieve additional relevant literature. Return ONLY the JSON array, e.g. ["query1","query2","query3"].`;
-        const gapRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
-          body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
-            messages: [
-              { role: 'system', content: gapExtractSystem },
-              { role: 'user', content: finalJson.directResponse }
-            ],
-            max_tokens: 200,
-            temperature: 0.3
-          })
-        }, 1, 5000);
-
-        const gapData = await gapRes.json();
-        let gapQueries = [];
-        try {
-          const gapText = gapData.choices[0].message.content.trim();
-          gapQueries = JSON.parse(gapText.replace(/```json\s*/g, '').replace(/```/g, ''));
-        } catch (e) {
-          console.warn(`[${rid}] Failed to parse gap queries, skipping.`);
-        }
-
-        // Fetch additional papers for each gap query
-        let extraPapers = [];
-        for (const q of gapQueries) {
-          await new Promise(r => setTimeout(r, 1200)); // rate limit
-          const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(q)}&limit=5&fields=paperId,title,url,year,abstract`;
-          try {
-            const s2Res = await fetchWithRetry(url, { headers: { 'x-api-key': s2ApiKey } }, 1, 6000);
-            const s2Data = await s2Res.json();
-            const papers = s2Data.data || [];
-            if (papers.length) {
-              const mapped = papers.map(p => ({
-                title: p.title || 'Untitled',
-                url: p.url || (p.paperId ? `https://www.semanticscholar.org/paper/${p.paperId}` : ''),
-                year: p.year || 'Unknown',
-                abstract: p.abstract?.substring(0, 400) + '...' || '',
-                associatedTarget: targetsHeading
-              })).filter(p => p.url);
-              extraPapers.push(...mapped);
-            }
-          } catch (err) {
-            console.error(`[${rid}] Gap S2 error:`, err.message);
-          }
-        }
-
-        // Deduplicate and merge
-        const allUniquePapers = [...uniquePapers, ...extraPapers].filter((p, idx, arr) => {
-          if (!p.url) return false;
-          return arr.findIndex(x => x.url === p.url) === idx;
-        }).slice(0, 50);
-
-        // Re‑synthesize the results array only, keeping directResponse and followUpOptions
-        const mergeSystem = `You are a biomedical literature curator. You have an existing analysis (directResponse and followUpOptions) that must NOT be changed. However, you have an expanded list of papers. Please update the "results" array to include ALL papers from the new list that are relevant to the topic. You may remove any that are now seen as irrelevant. Keep the same JSON schema for each paper. Return ONLY the updated JSON with the same fields (directResponse, followUpOptions, results). The directResponse and followUpOptions must be identical to the provided ones.`;
-        const mergePrompt = `Here is the existing JSON:
-${JSON.stringify(finalJson, null, 2)}
-
-Here are the additional papers (merged with original):
-${JSON.stringify(allUniquePapers, null, 2)}
-
-Return the updated JSON with the same directResponse and followUpOptions, but with the results array refined.`;
-
-        const mergeRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
-          body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
-            messages: [
-              { role: 'system', content: mergeSystem },
-              { role: 'user', content: mergePrompt }
-            ],
-            max_tokens: 1500,
-            temperature: 0.3
-          })
-        }, 1, 10000);
-
-        const mergeData = await mergeRes.json();
-        const mergeText = mergeData.choices[0].message.content;
-        try {
-          const mergedJson = extractJSON(mergeText);
-          // Keep original synthesis and follow‑ups, only update results
-          finalJson.results = mergedJson.results || finalJson.results;
-        } catch (e) {
-          console.warn(`[${rid}] Gap‑fill merge failed, keeping original results.`);
-        }
-      } catch (e) {
-        console.warn(`[${rid}] Gap‑fill process failed:`, e.message);
-      }
+    // Ensure confidence field exists
+    if (!finalJson.confidence) {
+      finalJson.confidence = finalJson.results && finalJson.results.length > 0 ? 'low' : 'none';
     }
-
-    finalJson.isFallback = fallbackTriggered;
-    if (finalJson.results) finalJson.results.forEach(r => r.source = 'Semantic Scholar');
 
     // Usage update
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
