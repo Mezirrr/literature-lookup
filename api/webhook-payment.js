@@ -8,6 +8,9 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// The plan references that belong to PharmaEngine
+const PHARMAENGINE_PLAN_REFS = ['starter-sub', 'researcher-sub', 'labrat-sub'];
+
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -65,33 +68,72 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Org ID mismatch' });
   }
 
+  // Only act on successful payments
   if (payload.event !== 'Payment.Updated' || payload.status !== 'Succeeded') {
     return res.status(200).json({ received: true, ignored: true });
   }
 
   const customerEmail = payload.customer?.email;
+  const customerId = payload.customer?.id;
   const planReference = payload.plan?.reference;
+  const subscriptionId = payload.subscription?.id;
 
-  if (!customerEmail) return res.status(200).json({ received: true, ignored: true });
+  if (!customerEmail || !planReference) {
+    return res.status(200).json({ received: true, ignored: true });
+  }
 
-  // New tier mapping
+  // Map plan reference to tier
   let tier = null;
   if (planReference === 'starter-sub') tier = 'Starter';
   else if (planReference === 'researcher-sub') tier = 'Researcher';
   else if (planReference === 'labrat-sub') tier = 'Lab Rat';
 
   if (!tier) {
-    console.warn('Webhook plan reference did not match a known tier:', planReference);
+    console.warn('Unknown plan reference:', planReference);
     return res.status(200).json({ received: true, ignored: true });
   }
 
+  // 1. Cancel other PharmaEngine subscriptions, but leave other subscriptions alone
+  if (subscriptionId && customerId && process.env.BOOMFI_API_KEY) {
+    try {
+      const listUrl = `https://api.boomfi.xyz/v1/subscriptions?customer_id=${encodeURIComponent(customerId)}&status=active`;
+      const listRes = await fetch(listUrl, {
+        headers: { 'Authorization': `Bearer ${process.env.BOOMFI_API_KEY}` }
+      });
+      const listData = await listRes.json();
+      const activeSubs = listData.data || [];
+
+      for (const sub of activeSubs) {
+        // Only cancel if it's a PharmaEngine plan and not the subscription that just succeeded
+        if (
+          sub.id !== subscriptionId &&
+          sub.plan?.reference &&
+          PHARMAENGINE_PLAN_REFS.includes(sub.plan.reference)
+        ) {
+          console.log(`Cancelling other PharmaEngine subscription ${sub.id} (${sub.plan.reference}) for ${customerEmail}`);
+          await fetch(`https://api.boomfi.xyz/v1/subscriptions/${sub.id}/cancel`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${process.env.BOOMFI_API_KEY}` }
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to cancel other PharmaEngine subscriptions:', e.message);
+      // Non‑fatal – still update the tier
+    }
+  }
+
+  // 2. Update the profile tier in Supabase
   const { data: profile } = await supabaseAdmin
     .from('profiles')
     .select('id')
     .eq('email', customerEmail)
     .single();
 
-  if (!profile) return res.status(200).json({ received: true, matched: false });
+  if (!profile) {
+    console.warn('No user found for email:', customerEmail);
+    return res.status(200).json({ received: true, matched: false });
+  }
 
   await supabaseAdmin
     .from('profiles')
