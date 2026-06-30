@@ -45,7 +45,6 @@ function extractJSON(str) {
   let json = cleaned.slice(first, last+1);
   json = json.replace(/,\s*([}\]])/g,'$1');
   try { return JSON.parse(json); } catch (e) {
-    // attempt to close open brackets
     const stack = [];
     for (let i = 0; i < json.length; i++) {
       if (json[i]==='['||json[i]==='{') stack.push(json[i]);
@@ -62,7 +61,6 @@ export default async function handler(req, res) {
   console.log(`[${rid}] Incoming assay request`);
   if (req.method !== 'POST') return res.status(405).json({ error:'Method not allowed' });
 
-  // Auth
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error:'Authentication required.' });
   const token = authHeader.replace('Bearer ','');
@@ -74,7 +72,6 @@ export default async function handler(req, res) {
     console.log(`[${rid}] Auth OK – ${user.email}`);
   } catch(e) { console.error(`[${rid}] Auth error:`,e); return res.status(401).json({ error:'Invalid session.' }); }
 
-  // Profile
   let profile;
   try {
     const { data, error } = await supabaseAdmin.from('profiles').select('*').eq('id',user.id).single();
@@ -120,7 +117,6 @@ export default async function handler(req, res) {
         else optimizedQueries[t] = [];
       }
     } catch(e) { console.warn(`[${rid}] Enhancer fallback:`,e.message); }
-    // ensure fallbacks
     for (const t of targetsArray) {
       if (!optimizedQueries[t]||optimizedQueries[t].length===0) optimizedQueries[t] = [`${t} ${goal||''}`.trim()];
       if (!optimizedQueries[t].includes(t)) optimizedQueries[t].push(t);
@@ -151,7 +147,6 @@ export default async function handler(req, res) {
       allPapers.push(...targetPapers);
     }
 
-    // Last-ditch if empty
     if (allPapers.length===0) {
       console.log(`[${rid}] Phase 2b: Last-ditch`);
       try {
@@ -175,33 +170,25 @@ export default async function handler(req, res) {
     const uniquePapers = allPapers.filter(p=>{ if(!p.url||seen.has(p.url)) return false; seen.add(p.url); return true; }).slice(0,35);
     console.log(`[${rid}] Total unique papers: ${uniquePapers.length}`);
 
-    // ========== UPGRADED SYNTHESIS ENGINE ==========
-    // 1. Initial synthesis with chain‑of‑thought and explicit reasoning trace
+    // Synthesis – relaxed paper inclusion rule
     const researcherContext = profile.researcher_profile ? `\n\nKnown Researcher Focus Profile: ${profile.researcher_profile}` : '';
-    const systemPrompt = `You are a 150-IQ elite biochemical intelligence engine that performs deep, multi‑step reasoning.
+    const systemPrompt = `You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.
 
-**You must follow this reasoning pipeline before writing the final JSON:**
+Your task:
+1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (${targetsHeading}) and the discovery goal. Use your extensive biomedical knowledge to deliver a thorough mechanistic analysis. Only incorporate paper details when they genuinely support the argument.
+2. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).
+3. Under "results", include **all papers** from the supplied list that are **even loosely relevant** to the topic. Do not discard papers unless they are completely unrelated. For each paper:
+   - Write a ≤18-word relevance explanation linking the paper to the query.
+   - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.
 
-1. **Deconstruct** the target list (${targetsHeading}) and the discovery goal into 3–5 mechanistic sub‑questions (e.g., "How does target X affect pathway Y under resistance pressure?").
-2. **Internally retrieve** relevant knowledge for each sub‑question – include quantitative data (frequencies, IC50s, temporal dynamics), known resistance nodes, and therapeutic vulnerabilities.
-3. **Cross‑link** the sub‑answers to identify non‑obvious emergent properties (e.g., paradoxical effects, metabolic rewiring, immune crosstalk).
-4. **Synthesise** a hyper‑analytical "directResponse" that integrates all insights into a coherent narrative (≥200 words).
-5. **Self‑critique** your synthesis: note any counter‑evidence, alternative interpretations, or missing mechanistic links. Include this in the "reasoningTrace" field (≤120 words).
-
-**Output ONLY valid JSON** with the following fields:
+Return ONLY raw JSON matching:
 {
-  "directResponse": "string (≥200 words)",
-  "followUpOptions": ["string","string","string"] (each ≤12 words),
-  "results": [ { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string (≤18 words)", "studyType":"In Vitro | In Vivo | Human" } ],
-  "reasoningTrace": "string (your internal deconstruction, sub‑questions, and self‑critique, ≤120 words)"
-}
-
-**Rules for "results":**
-- Include ONLY papers that are **directly relevant** to the specific query.
-- If none of the supplied papers are closely related, set "results" to an empty array [] and rely on your own knowledge for the directResponse.
-- For relevant papers, provide a concise relevance explanation and classify studyType (default to "In Vivo" if ambiguous).
-
-${researcherContext}`;
+  "directResponse": "string",
+  "followUpOptions": ["string","string","string"],
+  "results": [
+    { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }
+  ]
+}${researcherContext}`;
 
     const userPrompt = `Target type: ${typeLabel||'unspecified'}
 All Inputs: ${targetsHeading}
@@ -210,12 +197,12 @@ Enhanced Context: ${enhancedGoal}
 Fallback active: ${fallbackTriggered}
 Papers: ${JSON.stringify(uniquePapers, null, 2)}
 
-Proceed with your reasoning pipeline and return the JSON.`;
+Filter and return the JSON.`;
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${process.env.GROQ_API_KEY}` },
-      body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], max_tokens:6767, temperature:0.5 })
+      body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], max_tokens:2500, temperature:0.4 })
     }, 2, 12000);
 
     const groqData = await groqRes.json();
@@ -231,47 +218,9 @@ Proceed with your reasoning pipeline and return the JSON.`;
       return res.status(500).json({ error:'AI returned invalid format.' });
     }
 
-    // 2. Refinement pass (critique and improve the directResponse)
-    try {
-      if (finalJson.directResponse && finalJson.directResponse.length > 50) {
-        console.log(`[${rid}] Starting refinement pass...`);
-        const critiquePrompt = `You are a ruthless peer reviewer. Given this draft response:
-
-${JSON.stringify(finalJson, null, 2)}
-
-Identify **3 specific gaps** in the directResponse: missing mechanisms, over‑simplifications, unsupported claims, or overlooked therapeutic implications.
-Then, rewrite the entire JSON with an **improved directResponse** that addresses these gaps. Keep all other fields unchanged, but you may also refine the follow‑up questions if they become less relevant.
-
-Return ONLY the revised JSON in the same structure.`;
-
-        const refineRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${process.env.GROQ_API_KEY}` },
-          body: JSON.stringify({ model:'openai/gpt-oss-120b', messages:[{role:'system',content:'You are a rigorous biomedical critic who improves drafts.'},{role:'user',content:critiquePrompt}], max_tokens:6767, temperature:0.3 })
-        }, 1, 12000);
-
-        const refineData = await refineRes.json();
-        const refinedText = refineData.choices[0].message.content;
-        const refinedJson = extractJSON(refinedText);
-        // Overwrite only if valid and contains required fields
-        if (refinedJson.directResponse && refinedJson.followUpOptions && refinedJson.results !== undefined) {
-          finalJson = refinedJson;
-          console.log(`[${rid}] Refinement succeeded.`);
-        } else {
-          console.warn(`[${rid}] Refinement returned invalid JSON, keeping original.`);
-        }
-      }
-    } catch(e) {
-      console.warn(`[${rid}] Refinement failed:`, e.message);
-      // keep original
-    }
-
     finalJson.isFallback = fallbackTriggered;
     if (finalJson.results) finalJson.results.forEach(r=>r.source='Semantic Scholar');
-    // Ensure reasoningTrace exists for debugging (optional)
-    if (!finalJson.reasoningTrace) finalJson.reasoningTrace = 'Reasoning trace not provided.';
 
-    // Usage update
     const period = currentPeriod();
     const usedNow = (profile.usage_period===period?profile.assays_used_this_month:0)+1;
     const newCount = (profile.search_count||0)+1;
