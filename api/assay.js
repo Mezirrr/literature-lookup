@@ -18,9 +18,6 @@ const TIER_MAX_TOKENS = {
 
 const PROFILE_SYNTHESIS_EVERY = 5;
 
-// S2's public API is rate-limited (roughly 1 req/sec unauthenticated, more with a
-// valid API key). Complex queries can legitimately take longer than 6s to resolve,
-// so we give them more room and back off harder on 429s specifically.
 const S2_TIMEOUT_MS = 10000;
 const S2_RETRIES = 2;
 const S2_BASE_DELAY_MS = 1200;
@@ -42,7 +39,6 @@ async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = 8000) 
     } catch (error) {
       clearTimeout(timeoutId);
       if (i === retries) throw error;
-      // Back off longer on rate limiting than on generic errors/timeouts
       const isRateLimited = error.status === 429;
       const delay = isRateLimited ? 3000 * (i + 1) : 1000 * (i + 1);
       await new Promise(r => setTimeout(r, delay));
@@ -75,7 +71,7 @@ async function maybeUpdateResearcherProfile(userId, newSearchCount) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
+        model: 'llama-3-70b-versatile',
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: historyText }
@@ -92,16 +88,36 @@ async function maybeUpdateResearcherProfile(userId, newSearchCount) {
   }
 }
 
-function extractJSON(str) {
+function repairJSON(str) {
   let cleaned = str.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
   cleaned = cleaned.replace(/[\s\r\n]+$/g, '');
+  
   const first = cleaned.indexOf('{'), last = cleaned.lastIndexOf('}');
-  if (first === -1 || last === -1) throw new Error('No braces');
+  if (first === -1 || last === -1) throw new Error('No braces found');
   let json = cleaned.slice(first, last + 1);
+  
+  // Pre-parse fixes for common LLM mistakes:
+  // 1. Unquoted keys: `{key: value}` → `{"key": value}`
+  //    This regex looks for: (opening brace or comma)(optional whitespace)(identifier)(optional whitespace)(colon)
+  json = json.replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":');
+  
+  // 2. Trailing commas before ] or }
   json = json.replace(/,\s*([}\]])/g, '$1');
+  
+  // 3. Single-quoted strings to double-quoted (simple heuristic: preserve if nested quotes)
+  json = json.replace(/'([^'\\]|\\.)*?'/g, (match) => {
+    const inner = match.slice(1, -1);
+    // Only convert if no double-quotes inside
+    if (!inner.includes('"')) {
+      return '"' + inner.replace(/\\'/g, "'") + '"';
+    }
+    return match;
+  });
+
   try {
     return JSON.parse(json);
   } catch (e) {
+    // Fallback: auto-close unclosed brackets
     const stack = [];
     for (let i = 0; i < json.length; i++) {
       if (json[i] === '[' || json[i] === '{') stack.push(json[i]);
@@ -112,8 +128,22 @@ function extractJSON(str) {
       const opener = stack.pop();
       fixed += opener === '[' ? ']' : '}';
     }
-    return JSON.parse(fixed);
+    
+    try {
+      return JSON.parse(fixed);
+    } catch (e2) {
+      // Debug: show where the parse error is
+      const posMatch = e.message.match(/position (\d+)/);
+      const pos = posMatch ? parseInt(posMatch[1]) : 0;
+      const context = json.slice(Math.max(0, pos - 80), Math.min(json.length, pos + 80));
+      console.error('[JSON repair failed] Position ~' + pos + ', context: ' + context);
+      throw e2;
+    }
   }
+}
+
+function extractJSON(str) {
+  return repairJSON(str);
 }
 
 function extractCompounds(text, excludeTerms = []) {
@@ -123,10 +153,6 @@ function extractCompounds(text, excludeTerms = []) {
   return [...new Set(tokens)].filter(t => !excludeLower.has(t.toLowerCase()));
 }
 
-// Groq/open-weight models occasionally loop and repeat a full paragraph verbatim.
-// This catches an exact-duplicate block (>= ~120 chars repeated back-to-back-ish)
-// and trims the response to the first occurrence as a safety net on top of the
-// prompt-level instruction not to repeat itself.
 function trimRepeatedParagraph(text) {
   if (!text || text.length < 240) return text;
   const chunkLen = 120;
@@ -134,11 +160,36 @@ function trimRepeatedParagraph(text) {
     const chunk = text.slice(start, start + chunkLen);
     const nextIdx = text.indexOf(chunk, start + chunkLen);
     if (nextIdx !== -1) {
-      // Found the start of a repeat. Keep everything up to where the repeat begins.
       return text.slice(0, nextIdx).trim();
     }
   }
   return text;
+}
+
+// ========== PMC EUROPE PARALLEL SOURCE ==========
+// PMC Europe (PubMed Central) is free, no key needed, fast, and complements S2 well.
+// Their API: https://www.ebi.ac.uk/europepmc/webservices/rest/search
+async function fetchPMCEuropePapers(query, limit = 10) {
+  const url = 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=' +
+    encodeURIComponent(query) + '&format=json&pageSize=' + limit + '&cursorMark=*';
+  
+  try {
+    const res = await fetchWithRetry(url, {}, 1, 8000);
+    const data = await res.json();
+    const results = data.resultList && data.resultList.result ? data.resultList.result : [];
+    
+    return results.map(r => ({
+      title: r.title || 'Untitled',
+      url: r.pmcid ? ('https://www.ncbi.nlm.nih.gov/pmc/articles/PMC' + r.pmcid) : 
+           (r.doi ? ('https://doi.org/' + r.doi) : ''),
+      year: r.pubYear || 'Unknown',
+      abstract: (r.abstractText ? r.abstractText.substring(0, 400) + '...' : ''),
+      source: 'PMC Europe'
+    })).filter(p => p.url);
+  } catch (e) {
+    console.error('[PMC Europe error]:', e.message);
+    return [];
+  }
 }
 
 export default async function handler(req, res) {
@@ -160,7 +211,6 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid session.' });
   }
 
-  // ---------- Profile ----------
   let profile;
   try {
     const { data, error } = await supabaseAdmin
@@ -228,14 +278,9 @@ export default async function handler(req, res) {
   if (!targetsArray.length) return res.status(400).json({ error: 'No valid targets' });
 
   const targetsHeading = targetsArray.join(', ');
-
-  // S2 key moved to env var — it was hardcoded in source before, which is a
-  // needless secret-exposure risk even for a server-side key. The S2 API works
-  // without a key too (just at a lower rate limit), so we degrade gracefully
-  // instead of throwing if it's missing.
   const s2ApiKey = process.env.S2_API_KEY;
   if (!s2ApiKey) {
-    console.warn('[' + rid + '] No S2_API_KEY set — falling back to unauthenticated (lower rate limit) requests.');
+    console.warn('[' + rid + '] No S2_API_KEY in env – using unauthenticated S2 (slower)');
   }
   const s2Headers = s2ApiKey ? { 'x-api-key': s2ApiKey } : {};
 
@@ -249,21 +294,16 @@ export default async function handler(req, res) {
     let enhancedGoal = goal || 'General pharmacological profile';
     let optimizedQueries = {};
 
-    // IMPORTANT: Semantic Scholar's /paper/search endpoint is a relevance-ranked
-    // freetext search, not a boolean query parser. Quotes, AND/OR, and parentheses
-    // are NOT interpreted as logic — they're just extra literal characters that
-    // dilute the match and often return zero results. Queries need to read like
-    // something a person would type into a search box: short, plain, keyword-based.
-    const enhSystem = 'You are a biomedical search strategist writing queries for a plain keyword-based academic search API (NOT a boolean/database query language — it does not support AND/OR/quotes/parentheses as logic, they are just treated as literal text and will hurt results). ' +
+    const enhSystem = 'You are a biomedical search strategist writing queries for a plain keyword-based academic search API (NOT a boolean/database query language). ' +
       'For each target, generate up to 5 short, natural-language search phrases (3-8 words each, no quotes, no AND/OR, no parentheses) that capture different facets of the goal — vary terminology, use synonyms, broader and narrower concepts. ' +
-      'Write them the way you would type into Google Scholar. Return ONLY valid JSON: {"enhancedGoal":"technical reframing of the overall goal (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}';
+      'Write them the way you would type into Google Scholar. Return ONLY valid JSON: {"enhancedGoal":"technical reframing of the overall goal (1-2 sentences)", "optimizedQueries":{"TargetName":["query1","query2",...]}}}';
 
     try {
       const enhRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
         body: JSON.stringify({
-          model: 'openai/gpt-oss-120b',
+          model: 'llama-3-70b-versatile',
           messages: [
             { role: 'system', content: enhSystem },
             { role: 'user', content: 'Targets: ' + targetsHeading + '\nRaw Goal: ' + (goal || 'General info') }
@@ -292,7 +332,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Ensure each target has at least one query, and force compound queries
     for (const t of targetsArray) {
       if (!optimizedQueries[t]) optimizedQueries[t] = [];
       const rawGoalQuery = (t + ' ' + (goal || '')).trim();
@@ -307,64 +346,84 @@ export default async function handler(req, res) {
       }
     }
 
-    // ================== PHASE 2: SEMANTIC SCHOLAR ==================
+    // ================== PHASE 2: PARALLEL SOURCES (S2 + PMC Europe) ==================
     let allPapers = [], fallbackTriggered = false;
+    
+    // Run S2 and PMC Europe in parallel for the first 1-2 queries per target
     for (const target of targetsArray) {
       const queries = optimizedQueries[target] || [target];
       let targetPapers = [];
-      for (let qi = 0; qi < queries.length; qi++) {
+      
+      for (let qi = 0; qi < Math.min(queries.length, 3); qi++) {
         if (qi > 0) await new Promise(r => setTimeout(r, S2_BASE_DELAY_MS));
         const query = queries[qi];
-        console.log('[' + rid + '] S2 query ' + (qi + 1) + '/' + queries.length + ' for "' + target + '": "' + query + '"');
-        const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(query) + '&limit=10&fields=paperId,title,url,year,abstract';
-        try {
-          const s2Res = await fetchWithRetry(url, { headers: s2Headers }, S2_RETRIES, S2_TIMEOUT_MS);
-          const s2Data = await s2Res.json();
-          const papers = s2Data.data || [];
-          console.log('[' + rid + '] S2 returned ' + papers.length + ' papers for "' + query + '"');
-          if (papers.length) {
-            const mapped = papers.map(p => ({
+        console.log('[' + rid + '] Query ' + (qi + 1) + '/' + queries.length + ' for "' + target + '": "' + query + '"');
+        
+        // Fetch from both sources in parallel
+        const s2Promise = (async () => {
+          try {
+            const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(query) + '&limit=10&fields=paperId,title,url,year,abstract';
+            const s2Res = await fetchWithRetry(url, { headers: s2Headers }, S2_RETRIES, S2_TIMEOUT_MS);
+            const s2Data = await s2Res.json();
+            const papers = s2Data.data || [];
+            console.log('[' + rid + '] S2 returned ' + papers.length + ' papers for "' + query + '"');
+            return papers.map(p => ({
               title: p.title || 'Untitled',
               url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
               year: p.year || 'Unknown',
               abstract: (p.abstract ? p.abstract.substring(0, 400) + '...' : ''),
-              associatedTarget: target
+              source: 'Semantic Scholar'
             })).filter(p => p.url);
-            targetPapers.push(...mapped);
+          } catch (e) {
+            console.warn('[' + rid + '] S2 error for "' + query + '":', e.message);
+            return [];
           }
-          if (targetPapers.length >= 8) break;
-        } catch (err) {
-          console.error('[' + rid + '] S2 error for "' + query + '":', err.message);
-        }
+        })();
+        
+        const pmcPromise = fetchPMCEuropePapers(query, 10);
+        
+        const [s2Papers, pmcPapers] = await Promise.all([s2Promise, pmcPromise]);
+        targetPapers.push(...s2Papers, ...pmcPapers);
+        
+        if (targetPapers.length >= 12) break;
       }
+      
       if (targetPapers.length === 0) {
         fallbackTriggered = true;
       }
       allPapers.push(...targetPapers);
     }
 
+    // Last-ditch fallback: both sources with combined query
     if (allPapers.length === 0) {
       console.log('[' + rid + '] Phase 2b: Last-ditch with raw goal');
       const lastQuery = (targetsHeading + ' ' + (goal || '')).trim();
       console.log('[' + rid + '] Last-ditch query: "' + lastQuery + '"');
       await new Promise(r => setTimeout(r, S2_BASE_DELAY_MS));
-      const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(lastQuery) + '&limit=10&fields=paperId,title,url,year,abstract';
-      try {
-        const s2Res = await fetchWithRetry(url, { headers: s2Headers }, S2_RETRIES, S2_TIMEOUT_MS);
-        const s2Data = await s2Res.json();
-        const papers = s2Data.data || [];
-        console.log('[' + rid + '] Last-ditch returned ' + papers.length + ' papers');
-        const mapped = papers.map(p => ({
-          title: p.title || 'Untitled',
-          url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
-          year: p.year || 'Unknown',
-          abstract: (p.abstract ? p.abstract.substring(0, 400) + '...' : ''),
-          associatedTarget: targetsHeading
-        })).filter(p => p.url);
-        allPapers.push(...mapped);
-      } catch (e) {
-        console.warn('[' + rid + '] Last-ditch failed:', e.message);
-      }
+      
+      const s2Promise = (async () => {
+        try {
+          const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(lastQuery) + '&limit=10&fields=paperId,title,url,year,abstract';
+          const s2Res = await fetchWithRetry(url, { headers: s2Headers }, S2_RETRIES, S2_TIMEOUT_MS);
+          const s2Data = await s2Res.json();
+          const papers = s2Data.data || [];
+          console.log('[' + rid + '] Last-ditch S2 returned ' + papers.length + ' papers');
+          return papers.map(p => ({
+            title: p.title || 'Untitled',
+            url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
+            year: p.year || 'Unknown',
+            abstract: (p.abstract ? p.abstract.substring(0, 400) + '...' : ''),
+            source: 'Semantic Scholar'
+          })).filter(p => p.url);
+        } catch (e) {
+          console.warn('[' + rid + '] Last-ditch S2 failed:', e.message);
+          return [];
+        }
+      })();
+      
+      const pmcLastditch = fetchPMCEuropePapers(lastQuery, 10);
+      const [s2Papers, pmcPapers] = await Promise.all([s2Promise, pmcLastditch]);
+      allPapers.push(...s2Papers, ...pmcPapers);
     }
 
     const seen = new Set();
@@ -381,19 +440,20 @@ export default async function handler(req, res) {
       ? '\n\nKnown Researcher Focus Profile: ' + profile.researcher_profile
       : '';
 
-    const systemPrompt = 'You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis and non-obvious mechanistic cross-linking.\n\n' +
+    const systemPrompt = 'You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis, non-obvious mechanistic cross-linking, and exploratory hypothesis generation.\n\n' +
+      'Your core mission: uncover unexpected molecular connections, off-target effects, and creative research directions — even if the supplied papers don\'t directly name the user\'s goal.\n\n' +
       'Your task:\n' +
-      '1. Under "directResponse", provide a hyper-analytical, flawlessly logical 130-IQ synthesis explaining the connection between the targets (' + targetsHeading + ') and the discovery goal. **Open with the single most clinically or mechanistically important headline statement in bold, then elaborate with deep molecular detail.** Use your extensive biomedical knowledge; only cite a paper if it genuinely supports the argument. IMPORTANT: write each point exactly once — do not restate, repeat, or re-summarize any sentence or paragraph you have already written.\n' +
-      '2. **If the goal can be achieved or studied using specific small molecules, drugs, or compounds, mention up to 3 relevant examples (with names) and briefly state their known mechanisms, even if the supplied papers do not mention them.** Do this within the synthesis itself, after the main mechanistic explanation.\n' +
-      '3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions (≤12 words each).\n' +
-      '4. Under "results", include ONLY papers that are **directly relevant** to the user\'s specific query. Read the title and abstract of each paper; discard any paper that is clearly off-topic. If no paper is truly relevant, set "results" to an empty array []. For the papers you keep:\n' +
-      '   - Write a ≤18-word relevance explanation.\n' +
-      '   - Classify "studyType" as "In Vitro", "In Vivo", or "Human". Default to "In Vivo" if ambiguous.\n\n' +
+      '1. Under "directResponse", provide a hyper-creative, mechanistically rigorous synthesis that connects the targets (' + targetsHeading + ') to the goal. **Open with the most scientifically bold or clinically surprising headline statement in bold, then elaborate with deep molecular detail.** Synthesize across disciplines: pathway biology, structural biology, medicinal chemistry, cell biology, phenotypic outcomes. Use your extensive knowledge to propose novel mechanisms and non-obvious cross-talk — the goal may be achievable through unexpected molecular angles. IMPORTANT: write each point exactly once — do not restate, repeat, or re-summarize any sentence or paragraph.\n' +
+      '2. **Mention up to 3 relevant small molecules, drugs, or compounds (with names) and their known mechanisms.** These can be: (a) direct inhibitors/agonists of the target, (b) compounds that produce the desired phenotypic outcome via adjacent pathways, or (c) off-label/unexpected uses that illuminate the mechanism. Even if the papers don\'t mention them, use your knowledge.\n' +
+      '3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions that would test or extend the hypothesis (≤12 words each). These should probe unexpected angles.\n' +
+      '4. Under "results", include papers that illuminate the synthesis — not just directly-on-target work. Include: (a) papers on the target itself, (b) papers on pathway components, (c) papers on desired outcomes or phenotypes, (d) papers on unexpected off-target effects or cross-reactivity that might be mechanistically relevant. **If a paper sheds light on an adjacent mechanism, pathway interaction, or phenotypic pathway even if the title doesn\'t match perfectly, include it and explain how it\'s relevant.** If no papers are found, set "results" to an empty array []. For each paper you keep:\n' +
+      '   - Write a ≤18-word relevance explanation: why does this paper illuminate the hypothesis?\n' +
+      '   - Classify "studyType" as "In Vitro", "In Vivo", or "Human".\n\n' +
       'Return ONLY raw JSON matching:\n' +
-      '{\n  "directResponse": "string",\n  "followUpOptions": ["string","string","string"],\n  "results": [\n    { "title":"string", "url":"string", "source":"Semantic Scholar", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }\n  ],\n  "confidence": "high|low|none"\n}\n' +
-      '- Set "confidence" to "high" if there are relevant papers that directly support the synthesis.\n' +
-      '- Set "confidence" to "low" if only a few tangential papers exist.\n' +
-      '- Set "confidence" to "none" if no papers were found – in that case the synthesis is based solely on general knowledge, and the "results" array must be empty [].' +
+      '{\n  "directResponse": "string",\n  "followUpOptions": ["string","string","string"],\n  "results": [\n    { "title":"string", "url":"string", "source":"string", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }\n  ],\n  "confidence": "high|low|none"\n}\n' +
+      '- Set "confidence" to "high" if papers directly support or richly illuminate the synthesis.\n' +
+      '- Set "confidence" to "low" if papers are sparse or tangential but still mechanistically relevant.\n' +
+      '- Set "confidence" to "none" if no papers were found – synthesis is based on general knowledge, "results" is empty [].' +
       researcherContext;
 
     const userPrompt = 'Target type: ' + (typeLabel || 'unspecified') + '\n' +
@@ -402,23 +462,21 @@ export default async function handler(req, res) {
       'Enhanced Context: ' + enhancedGoal + '\n' +
       'Fallback active: ' + fallbackTriggered + '\n' +
       'Papers: ' + JSON.stringify(uniquePapers, null, 2) + '\n\n' +
-      'Evaluate each paper. Only keep those that truly match the goal. Discard any paper that is about an unrelated topic. Return the JSON.';
+      'Evaluate each paper for mechanistic relevance to the hypothesis. Include papers that illuminate adjacent pathways, unexpected mechanisms, phenotypic outcomes, or off-target effects — even if they don\'t directly mention the target or goal. Exclude only papers that are completely unrelated to the biology or chemistry at hand. The goal may be achievable through creative cross-linking, so be inclusive of tangential but mechanistically interesting work. Return the JSON.';
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
+        model: 'llama-3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         max_tokens: maxTokens,
-        temperature: 0.4,
-        // Discourage the model from looping and repeating whole paragraphs,
-        // a known failure mode on some open-weight models for long outputs.
-        frequency_penalty: 0.4,
-        presence_penalty: 0.2
+        temperature: 0.6,
+        frequency_penalty: 0.2,
+        presence_penalty: 0.1
       })
     }, 2, 12000);
 
@@ -431,11 +489,10 @@ export default async function handler(req, res) {
       finalJson = extractJSON(rawText);
     } catch (e) {
       console.error('[' + rid + '] JSON parse failed:', e.message);
-      return res.status(500).json({ error: 'AI returned invalid format.' });
+      console.error('[' + rid + '] Raw text (first 500 chars):', rawText.slice(0, 500));
+      return res.status(500).json({ error: 'AI returned unparseable format: ' + e.message.slice(0, 100) });
     }
 
-    // Safety net: trim any exact-duplicate paragraph the model produced despite
-    // the prompt instruction and penalties above.
     if (typeof finalJson.directResponse === 'string') {
       finalJson.directResponse = trimRepeatedParagraph(finalJson.directResponse);
     }
@@ -445,7 +502,6 @@ export default async function handler(req, res) {
     }
 
     finalJson.isFallback = fallbackTriggered;
-    if (finalJson.results) finalJson.results.forEach(r => r.source = 'Semantic Scholar');
 
     // Usage update
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
