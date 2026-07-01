@@ -199,7 +199,6 @@ export default async function handler(req, res) {
       profile = data;
     }
 
-    // Special user (mezirrr@protonmail.com) – always Researcher, unlimited
     if (user.email === 'mezirrr@protonmail.com') {
       if (profile.tier !== 'Researcher') {
         console.log('[' + rid + '] Super user detected – upgrading to Researcher (unlimited)');
@@ -212,7 +211,6 @@ export default async function handler(req, res) {
         profile.assays_used_this_month = 0;
         profile.usage_period = currentPeriod();
       }
-      // Unlimited usage: override limit to infinity
       profile._unlimited = true;
     }
 
@@ -297,7 +295,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Ensure each target has at least one query, and force compound-specific queries
     for (const t of targetsArray) {
       if (!optimizedQueries[t]) optimizedQueries[t] = [];
       const rawGoalQuery = (t + ' ' + (goal || '')).trim();
@@ -312,7 +309,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // ================== PHASE 2: PARALLEL SOURCES (S2 + PMC Europe) ==================
+    // ================== PHASE 2: PARALLEL SOURCES ==================
     let allPapers = [], fallbackTriggered = false;
 
     for (const target of targetsArray) {
@@ -324,7 +321,6 @@ export default async function handler(req, res) {
         const query = queries[qi];
         console.log('[' + rid + '] Query ' + (qi + 1) + '/' + queries.length + ' for "' + target + '": "' + query + '"');
 
-        // Fetch from both sources in parallel
         const s2Promise = (async () => {
           try {
             const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(query) + '&limit=10&fields=paperId,title,url,year,abstract';
@@ -346,10 +342,8 @@ export default async function handler(req, res) {
         })();
 
         const pmcPromise = fetchPMCEuropePapers(query, 10);
-
         const [s2Papers, pmcPapers] = await Promise.all([s2Promise, pmcPromise]);
         targetPapers.push(...s2Papers, ...pmcPapers);
-
         if (targetPapers.length >= 12) break;
       }
 
@@ -359,20 +353,16 @@ export default async function handler(req, res) {
       allPapers.push(...targetPapers);
     }
 
-    // Last-ditch fallback: both sources with combined query
     if (allPapers.length === 0) {
-      console.log('[' + rid + '] Phase 2b: Last-ditch with raw goal');
+      console.log('[' + rid + '] Phase 2b: Last-ditch');
       const lastQuery = (targetsHeading + ' ' + (goal || '')).trim();
-      console.log('[' + rid + '] Last-ditch query: "' + lastQuery + '"');
       await new Promise(r => setTimeout(r, S2_BASE_DELAY_MS));
-
       const s2Promise = (async () => {
         try {
           const url = 'https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(lastQuery) + '&limit=10&fields=paperId,title,url,year,abstract';
           const s2Res = await fetchWithRetry(url, { headers: s2Headers }, S2_RETRIES, S2_TIMEOUT_MS);
           const s2Data = await s2Res.json();
           const papers = s2Data.data || [];
-          console.log('[' + rid + '] Last-ditch S2 returned ' + papers.length + ' papers');
           return papers.map(p => ({
             title: p.title || 'Untitled',
             url: p.url || (p.paperId ? 'https://www.semanticscholar.org/paper/' + p.paperId : ''),
@@ -381,11 +371,9 @@ export default async function handler(req, res) {
             source: 'Semantic Scholar'
           })).filter(p => p.url);
         } catch (e) {
-          console.warn('[' + rid + '] Last-ditch S2 failed:', e.message);
           return [];
         }
       })();
-
       const pmcLastditch = fetchPMCEuropePapers(lastQuery, 10);
       const [s2Papers, pmcPapers] = await Promise.all([s2Promise, pmcLastditch]);
       allPapers.push(...s2Papers, ...pmcPapers);
@@ -400,22 +388,20 @@ export default async function handler(req, res) {
 
     console.log('[' + rid + '] Total unique papers: ' + uniquePapers.length);
 
-    // ================== PHASE 3: SYNTHESIS (NO MEMORY BIAS) ==================
-    const systemPrompt = 'You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis, non-obvious mechanistic cross-linking, and exploratory hypothesis generation.\n\n' +
-      'IMPORTANT: Return ONLY valid JSON. **Never use markdown inside JSON values.** Do NOT wrap any text in **bold** or other formatting; use plain text only.\n\n' +
-      'Your core mission: uncover unexpected molecular connections, off-target effects, and creative research directions — even if the supplied papers don\'t directly name the user\'s goal.\n\n' +
+    // ================== PHASE 3: SYNTHESIS – TRUTHFUL, PAPER‑BOUND ==================
+    const systemPrompt = 'You are an elite biomedical intelligence engine. Your overriding duty is accuracy.\n\n' +
+      'CRITICAL RULES:\n' +
+      '- Every claim in the "directResponse" must be either **explicitly stated in a supplied paper** or be **basic, indisputable textbook knowledge** (e.g., "STAT3 is a transcription factor").\n' +
+      '- Do NOT invent mechanisms, pathways, or drug interactions unless a paper directly describes them in the context of the user\'s targets and goal.\n' +
+      '- If the papers do not support a mechanistic link, say so clearly or omit that link.\n' +
+      '- For the "results" array, include **only** papers that are specifically about the target(s) **AND** the biological context mentioned in the goal (e.g., chondrocytes, growth plate, bone, senescence). Papers about unrelated cell types or diseases must be discarded, even if they mention a shared pathway.\n' +
+      '- If no paper in the list is directly relevant, set "results" to an empty array [] and set "confidence" to "none".\n\n' +
       'Your task:\n' +
-      '1. Under "directResponse", provide a hyper-creative, mechanistically rigorous synthesis that connects the targets (' + targetsHeading + ') to the goal. Write the most scientifically bold or clinically surprising headline sentence first (as plain text, no asterisks), then elaborate with deep molecular detail. Synthesize across disciplines: pathway biology, structural biology, medicinal chemistry, cell biology, phenotypic outcomes. Use your extensive knowledge to propose novel mechanisms and non-obvious cross-talk. IMPORTANT: write each point exactly once — do not restate, repeat, or re-summarize any sentence or paragraph.\n' +
-      '2. **Mention up to 3 relevant small molecules, drugs, or compounds (with names) and their known mechanisms.** These can be: (a) direct inhibitors/agonists of the target, (b) compounds that produce the desired phenotypic outcome via adjacent pathways, or (c) off-label/unexpected uses that illuminate the mechanism. Even if the papers don\'t mention them, use your knowledge.\n' +
-      '3. Under "followUpOptions", give exactly 3 deep, insightful follow-up questions that would test or extend the hypothesis (≤12 words each). These should probe unexpected angles.\n' +
-      '4. Under "results", include papers that illuminate the synthesis — not just directly-on-target work. Include: (a) papers on the target itself, (b) papers on pathway components, (c) papers on desired outcomes or phenotypes, (d) papers on unexpected off-target effects or cross-reactivity that might be mechanistically relevant. **If a paper sheds light on an adjacent mechanism, pathway interaction, or phenotypic pathway even if the title doesn\'t match perfectly, include it and explain how it\'s relevant.** If no papers are found, set "results" to an empty array []. For each paper you keep:\n' +
-      '   - Write a ≤18-word relevance explanation: why does this paper illuminate the hypothesis?\n' +
-      '   - Classify "studyType" as "In Vitro", "In Vivo", or "Human".\n\n' +
-      'Return ONLY raw JSON matching:\n' +
-      '{\n  "directResponse": "string",\n  "followUpOptions": ["string","string","string"],\n  "results": [\n    { "title":"string", "url":"string", "source":"string", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }\n  ],\n  "confidence": "high|low|none"\n}\n' +
-      '- Set "confidence" to "high" if papers directly support or richly illuminate the synthesis.\n' +
-      '- Set "confidence" to "low" if papers are sparse or tangential but still mechanistically relevant.\n' +
-      '- Set "confidence" to "none" if no papers were found – synthesis is based on general knowledge, "results" is empty [].';
+      '1. Under "directResponse", synthesise the paper findings into a concise, factual explanation. Start with the most important conclusion. Do NOT add a bold headline – just plain text.\n' +
+      '2. Under "followUpOptions", give exactly 3 questions (≤12 words each) that the remaining gaps naturally suggest.\n' +
+      '3. Under "results", list the papers you kept, with a ≤18‑word relevance explanation and a "studyType".\n' +
+      '4. Set "confidence" to "high" if multiple papers directly address the query, "low" if only tangential support exists, and "none" if no paper is relevant.\n\n' +
+      'Return ONLY raw JSON: { "directResponse": "...", "followUpOptions": [...], "results": [...], "confidence": "high|low|none" }';
 
     const userPrompt = 'Target type: ' + (typeLabel || 'unspecified') + '\n' +
       'All Inputs: ' + targetsHeading + '\n' +
@@ -423,7 +409,7 @@ export default async function handler(req, res) {
       'Enhanced Context: ' + enhancedGoal + '\n' +
       'Fallback active: ' + fallbackTriggered + '\n' +
       'Papers: ' + JSON.stringify(uniquePapers, null, 2) + '\n\n' +
-      'Evaluate each paper for mechanistic relevance to the hypothesis. Include papers that illuminate adjacent pathways, unexpected mechanisms, phenotypic outcomes, or off-target effects — even if they don\'t directly mention the target or goal. Exclude only papers that are completely unrelated to the biology or chemistry at hand. The goal may be achievable through creative cross-linking, so be inclusive of tangential but mechanistically interesting work. Return the JSON.';
+      'Filter the papers rigorously. Only keep those that match the target(s) AND the specific biological context (e.g., chondrocytes, growth plate, bone). Then write the synthesis.';
 
     const groqRes = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -435,9 +421,9 @@ export default async function handler(req, res) {
           { role: 'user', content: userPrompt }
         ],
         max_tokens: maxTokens,
-        temperature: 0.6,
-        frequency_penalty: 0.2,
-        presence_penalty: 0.1
+        temperature: 0.3,
+        frequency_penalty: 0.4,
+        presence_penalty: 0.3
       })
     }, 2, 12000);
 
@@ -450,7 +436,6 @@ export default async function handler(req, res) {
       finalJson = extractJSON(rawText);
     } catch (e) {
       console.error('[' + rid + '] JSON parse failed:', e.message);
-      console.error('[' + rid + '] Raw text (first 500 chars):', rawText.slice(0, 500));
       return res.status(500).json({ error: 'AI returned unparseable format: ' + e.message.slice(0, 100) });
     }
 
@@ -464,7 +449,6 @@ export default async function handler(req, res) {
 
     finalJson.isFallback = fallbackTriggered;
 
-    // Usage update
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
     const newCount = (profile.search_count || 0) + 1;
 
