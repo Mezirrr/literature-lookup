@@ -71,7 +71,7 @@ async function maybeUpdateResearcherProfile(userId, newSearchCount) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3-70b-versatile',
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: historyText }
@@ -97,6 +97,20 @@ function repairJSON(str) {
   let json = cleaned.slice(first, last + 1);
   
   // Pre-parse fixes for common LLM mistakes:
+  
+  // 0. Strip markdown formatting from string values (Llama loves to add ** ** for bold)
+  //    This removes **text** and __text__ and *text* patterns inside quoted strings
+  //    Regex: find opening quote, then replace markdown decorators inside, then closing quote
+  json = json.replace(/"([^"]*)"/g, (match) => {
+    let inner = match.slice(1, -1); // Remove surrounding quotes
+    // Remove markdown bold/italic/underline decorators
+    inner = inner.replace(/\*\*(.+?)\*\*/g, '$1');  // **bold** → bold
+    inner = inner.replace(/__(.+?)__/g, '$1');       // __bold__ → bold
+    inner = inner.replace(/\*(.+?)\*/g, '$1');       // *italic* → italic
+    inner = inner.replace(/_(.+?)_/g, '$1');         // _italic_ → italic
+    return '"' + inner + '"';
+  });
+  
   // 1. Unquoted keys: `{key: value}` → `{"key": value}`
   //    This regex looks for: (opening brace or comma)(optional whitespace)(identifier)(optional whitespace)(colon)
   json = json.replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":');
@@ -303,7 +317,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: 'llama-3-70b-versatile',
           messages: [
             { role: 'system', content: enhSystem },
             { role: 'user', content: 'Targets: ' + targetsHeading + '\nRaw Goal: ' + (goal || 'General info') }
@@ -468,7 +482,7 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
