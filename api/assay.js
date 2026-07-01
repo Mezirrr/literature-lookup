@@ -16,7 +16,6 @@ const TIER_MAX_TOKENS = {
   'Lab Rat': 15000
 };
 
-const PROFILE_SYNTHESIS_EVERY = 5;
 const S2_TIMEOUT_MS = 10000;
 const S2_RETRIES = 2;
 const S2_BASE_DELAY_MS = 1200;
@@ -49,44 +48,6 @@ function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
 }
 
-async function maybeUpdateResearcherProfile(userId, newSearchCount) {
-  if (newSearchCount % PROFILE_SYNTHESIS_EVERY !== 0) return;
-  const { data: recent } = await supabaseAdmin
-    .from('search_history')
-    .select('target_searched, goal_input')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(5);
-  if (!recent || !recent.length) return;
-
-  const historyText = recent
-    .map((s, i) => (i + 1) + '. Target(s): ' + s.target_searched + ' | Goal: ' + (s.goal_input || 'n/a'))
-    .join('\n');
-
-  const system = 'You write extremely terse researcher‑focus summaries. Given recent search queries, output ONLY a single plain‑text synthesis, ≤100 words. No preamble, no JSON.';
-
-  try {
-    const res = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.GROQ_API_KEY },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: historyText }
-        ]
-      })
-    }, 1, 6000);
-    const data = await res.json();
-    const synth = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content.trim() : null;
-    if (synth) {
-      await supabaseAdmin.from('profiles').update({ researcher_profile: synth }).eq('id', userId);
-    }
-  } catch (e) {
-    console.error('Profile synthesis failed (non-critical):', e.message);
-  }
-}
-
 function repairJSON(str) {
   let cleaned = str.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
   cleaned = cleaned.replace(/[\s\r\n]+$/g, '');
@@ -94,11 +55,11 @@ function repairJSON(str) {
   if (first === -1 || last === -1) throw new Error('No braces found');
   let json = cleaned.slice(first, last + 1);
 
-  // Fix 1: wrap bare **bold** or __bold__ values in quotes (e.g., "key": **value** → "key": "**value**")
+  // Fix 1: wrap bare **bold** or __bold__ values in quotes
   json = json.replace(/:\s*\*\*([^*]+)\*\*/g, ':"**$1**"');
   json = json.replace(/:\s*__([^_]+)__/g, ':"__$1__"');
 
-  // Fix 2: remove markdown inside quoted strings (the existing fix)
+  // Fix 2: remove markdown inside quoted strings
   json = json.replace(/"([^"]*)"/g, (match) => {
     let inner = match.slice(1, -1);
     inner = inner.replace(/\*\*(.+?)\*\*/g, '$1');
@@ -209,6 +170,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid session.' });
   }
 
+  // ---------- Profile ----------
   let profile;
   try {
     const { data, error } = await supabaseAdmin
@@ -433,11 +395,7 @@ export default async function handler(req, res) {
 
     console.log('[' + rid + '] Total unique papers: ' + uniquePapers.length);
 
-    // ================== PHASE 3: SYNTHESIS ==================
-    const researcherContext = profile.researcher_profile
-      ? '\n\nKnown Researcher Focus Profile: ' + profile.researcher_profile
-      : '';
-
+    // ================== PHASE 3: SYNTHESIS (NO MEMORY BIAS) ==================
     const systemPrompt = 'You are a 130-IQ elite biochemical intelligence engine specializing in cross-disciplinary synthesis, non-obvious mechanistic cross-linking, and exploratory hypothesis generation.\n\n' +
       'IMPORTANT: Return ONLY valid JSON. **Never use markdown inside JSON values.** Do NOT wrap any text in **bold** or other formatting; use plain text only.\n\n' +
       'Your core mission: uncover unexpected molecular connections, off-target effects, and creative research directions — even if the supplied papers don\'t directly name the user\'s goal.\n\n' +
@@ -452,8 +410,7 @@ export default async function handler(req, res) {
       '{\n  "directResponse": "string",\n  "followUpOptions": ["string","string","string"],\n  "results": [\n    { "title":"string", "url":"string", "source":"string", "year":"string", "relevance":"string", "studyType":"In Vitro | In Vivo | Human" }\n  ],\n  "confidence": "high|low|none"\n}\n' +
       '- Set "confidence" to "high" if papers directly support or richly illuminate the synthesis.\n' +
       '- Set "confidence" to "low" if papers are sparse or tangential but still mechanistically relevant.\n' +
-      '- Set "confidence" to "none" if no papers were found – synthesis is based on general knowledge, "results" is empty [].' +
-      researcherContext;
+      '- Set "confidence" to "none" if no papers were found – synthesis is based on general knowledge, "results" is empty [].';
 
     const userPrompt = 'Target type: ' + (typeLabel || 'unspecified') + '\n' +
       'All Inputs: ' + targetsHeading + '\n' +
@@ -502,7 +459,7 @@ export default async function handler(req, res) {
 
     finalJson.isFallback = fallbackTriggered;
 
-    // Usage update
+    // Usage update (history still stored for the 7‑day chart, but no longer used to bias the AI)
     const usedNow = (profile.usage_period === period ? profile.assays_used_this_month : 0) + 1;
     const newCount = (profile.search_count || 0) + 1;
 
@@ -518,11 +475,11 @@ export default async function handler(req, res) {
       goal_input: goal
     }]);
 
-    maybeUpdateResearcherProfile(user.id, newCount);
-
     return res.status(200).json(finalJson);
   } catch (error) {
     console.error('[' + rid + '] ❌ UNHANDLED:', error);
     return res.status(500).json({ error: 'Pipeline error: ' + error.message.slice(0, 150) });
   }
 }
+
+
